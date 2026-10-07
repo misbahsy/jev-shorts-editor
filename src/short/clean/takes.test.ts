@@ -99,7 +99,7 @@ test("the last phrase is never dropped as a short slip", () => {
   assert.equal(r.decisions[0].accepted, false);
 });
 
-test("the LLM and Jev together cannot remove more than the cap of the speech", () => {
+test("what the model adds cannot pass the cap of the speech, whatever Jev already removed", () => {
   // ten identical lines: the model proposes dropping the first nine; Jev already took two
   const lines = Array.from({ length: 10 }, () => "we cut the long boring take again").join(" ~0.6 ");
   const w = script(lines);
@@ -107,9 +107,11 @@ test("the LLM and Jev together cannot remove more than the cap of the speech", (
   const proposals = Array.from({ length: 9 }, (_, k) => ({ from: k * per, to: k * per + per - 1, reason: "earlier take" }));
   const jev = new Set<number>([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   const r = guardProposals({ words: w, alreadyRemoved: jev, proposals });
-  const removedWords = r.drops.size + jev.size;
-  assert.ok(removedWords <= Math.floor(w.length * 0.4) + per, `removed ${removedWords} of ${w.length}`);
-  assert.ok(r.decisions.some(d => /more than 40%/.test(d.rejected ?? "")));
+  assert.ok(r.drops.size <= Math.floor(w.length * 0.25), `model added ${r.drops.size} of ${w.length}`);
+  assert.ok(r.drops.size > 0);
+  assert.ok(r.decisions.some(d => /more than 25%/.test(d.rejected ?? "")));
+  // Jev's own removals are not touched or counted against the model
+  assert.ok([...jev].every(i => !r.drops.has(i)));
 });
 
 test("words Jev already removed are not counted twice, and are not the twin", () => {

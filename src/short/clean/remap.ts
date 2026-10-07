@@ -18,17 +18,28 @@ export function remapTime(t: number, keeps: Range[]): number {
   return acc;
 }
 
-/** True when the word lies fully inside one keep range. */
-function insideKeep(w: { start: number; end: number }, keeps: Range[]): boolean {
-  return keeps.some(k => w.start >= k.start - 1e-6 && w.end <= k.end + 1e-6);
+/**
+ * The keep range a word belongs to: the one holding its center. A word that sticks out a
+ * little past a cut edge (the cut follows the sound, the timestamp can lag) still belongs to
+ * it; a word that is half or more outside is a cut word.
+ */
+function keepOf(w: { start: number; end: number }, keeps: Range[]): Range | undefined {
+  const mid = (w.start + w.end) / 2;
+  return keeps.find(k => mid >= k.start && mid <= k.end);
 }
 
-/** The words that survive the cut, re-indexed, with times on the output clock. */
+/** The words that survive the cut, re-indexed, with times on the output clock (clamped to their keep). */
 export function remapWords(words: Word[], keeps: Range[]): Word[] {
   const out: Word[] = [];
   for (const w of words) {
-    if (!insideKeep(w, keeps)) continue;
-    out.push({ i: out.length, text: w.text, start: remapTime(w.start, keeps), end: remapTime(w.end, keeps) });
+    const k = keepOf(w, keeps);
+    if (!k) continue;
+    out.push({
+      i: out.length,
+      text: w.text,
+      start: remapTime(Math.max(w.start, k.start), keeps),
+      end: remapTime(Math.min(w.end, k.end), keeps),
+    });
   }
   return out;
 }

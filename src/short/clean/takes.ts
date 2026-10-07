@@ -125,7 +125,7 @@ export interface GuardInput {
  *  - it is a longer drop (more than a slip) whose content is not said again later, which also
  *    means the last take of a line can never be dropped;
  *  - a short drop that stands inside a phrase has no later twin;
- *  - the total removed (Jev included) would pass TAKES_MAX_DROP_FRACTION of the speech.
+ *  - the words the model adds would pass TAKES_MAX_DROP_FRACTION of the speech.
  * Later drops are decided first, so a take is only judged against what survives after it.
  */
 export function guardProposals(input: GuardInput): { decisions: TakeDecision[]; drops: Map<number, string> } {
@@ -157,7 +157,6 @@ export function guardProposals(input: GuardInput): { decisions: TakeDecision[]; 
   const removed = new Set(alreadyRemoved);
   const drops = new Map<number, string>();
   let removedSpeech = 0;
-  for (const i of removed) removedSpeech += words[i].end - words[i].start;
   const cap = speech * TAKES_MAX_DROP_FRACTION;
 
   // later drops first: each is judged against what survives after it
@@ -212,7 +211,7 @@ export async function selectTakes(input: SelectTakesInput): Promise<TakeSelectio
   if (words.length === 0 || input.off) return empty("off");
   const t0 = Date.now();
   try {
-    const call: TakesCall = input.call ?? (prompt => callGroq(prompt, getGroqKey(), GROQ_TEXT_MODEL, 4096));
+    const call: TakesCall = input.call ?? (prompt => callGroq(prompt, getGroqKey(), GROQ_TEXT_MODEL, 4096, undefined, 0));
     const text = await call(buildTakesPrompt(packTranscript(words)));
     const proposals = parseProposals(text);
     const { decisions, drops } = guardProposals({ words, proposals, alreadyRemoved });

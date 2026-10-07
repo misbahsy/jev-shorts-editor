@@ -162,9 +162,11 @@ export function snapWordsToEdges(words: Word[], edges: WordEdges[]): Word[] {
     let start = Math.max(edges[k].onset.t, prevEnd);
     let end = edges[k].offset.t;
     if (end - start < MIN_WORD_SEC) {
-      // the edges collapsed (a word the audio barely has): keep the transcript's own span
-      start = Math.max(w.start, prevEnd);
-      end = Math.max(w.end, start + MIN_WORD_SEC);
+      // the edges collapsed (the sound here is only a short tail): stay inside the sound,
+      // never run out past it into the cut
+      end = Math.max(end, start + MIN_WORD_SEC);
+      start = Math.max(prevEnd, Math.min(start, end - MIN_WORD_SEC));
+      end = Math.max(end, start + MIN_WORD_SEC);
     }
     out.push({ ...w, start, end });
     prevEnd = end;
