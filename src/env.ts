@@ -49,7 +49,38 @@ export function requireEnv(name: string): string {
   return value;
 }
 
-/** Returns the TypeSafe (Jev) API key. */
-export function getApiKey(): string {
-  return requireEnv("TYPESAFE_API_KEY");
+/** Returns the named value if it is set, without throwing. */
+export function optionalEnv(name: string): string | undefined {
+  return process.env[name] || loadEnvFile()[name] || undefined;
+}
+
+/** Where Jev decision requests go, and with which key and model name. */
+export interface JevTarget {
+  via: "typesafe" | "litellm";
+  url: string;
+  model: string;
+  apiKey: string;
+}
+
+/**
+ * Direct to TypeSafe by default. When LITELLM_BASE_URL is set, requests go to that
+ * gateway's /v1/decisions route instead, authenticated with LITELLM_API_KEY, and
+ * JEV_MODEL names the gateway's model group (default "jev").
+ */
+export function getJevTarget(): JevTarget {
+  const gateway = optionalEnv("LITELLM_BASE_URL");
+  if (gateway) {
+    return {
+      via: "litellm",
+      url: `${gateway.replace(/\/+$/, "")}/v1/decisions`,
+      model: optionalEnv("JEV_MODEL") ?? "jev",
+      apiKey: requireEnv("LITELLM_API_KEY"),
+    };
+  }
+  return {
+    via: "typesafe",
+    url: "https://api.typesafe.ai/v1/systemone",
+    model: optionalEnv("JEV_MODEL") ?? "jev-latest",
+    apiKey: requireEnv("TYPESAFE_API_KEY"),
+  };
 }

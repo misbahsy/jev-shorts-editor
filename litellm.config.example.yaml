@@ -1,0 +1,13 @@
+# Minimal LiteLLM gateway config for jev-shorts-editor.
+# Run it with:  litellm --config litellm.config.example.yaml --port 4000
+# then set LITELLM_BASE_URL=http://localhost:4000 and LITELLM_API_KEY in .env.
+model_list:
+  - model_name: jev                  # what the editor asks for (JEV_MODEL)
+    litellm_params:
+      model: typesafe/jev-latest
+      api_key: os.environ/TYPESAFE_API_KEY
+    model_info:
+      mode: evaluation
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

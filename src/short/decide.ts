@@ -3,7 +3,7 @@
  * sentence boundaries are re-derived from trailing sentence punctuation) +
  * the Jev fan-out: one global request, one request per beat.
  */
-import { getApiKey } from "../env";
+import { getJevTarget } from "../env";
 import { callSystemOne, type Question, type Answer, type ChoiceAnswer, type ScoreAnswer, type NoulAnswer } from "../jevClient";
 import {
   STYLE_FAMILY_MENU,
@@ -174,7 +174,7 @@ function asNoul(a: Answer): NoulAnswer {
 const COST_PER_1M_INPUT = 0.042;
 
 export async function decide(words: Word[], perception: Perception, meta: { title: string }): Promise<Decisions> {
-  const apiKey = getApiKey();
+  const target = getJevTarget();
   const beats = buildBeats(words);
   const footage = footageContext(perception);
   const transcript = numberedTranscript(beats);
@@ -201,7 +201,7 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
   };
   const globalState = { footage, title: meta.title, transcript };
 
-  const globalPromise = callSystemOne(apiKey, globalState, globalQuestions);
+  const globalPromise = callSystemOne(target, globalState, globalQuestions);
 
   // ---- per-beat requests ----
   const beatResults = await mapLimit(beats, 32, async (beat, idx) => {
@@ -246,14 +246,14 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
         : {}),
     };
 
-    const result = await callSystemOne(apiKey, state, questions);
+    const result = await callSystemOne(target, state, questions);
     return { beat, result };
   });
 
   const globalResult = await globalPromise;
   latencies.push(globalResult.latencyMs);
-  inputTokens += globalResult.response.usage.input_tokens;
-  outputTokens += globalResult.response.usage.output_tokens;
+  inputTokens += (globalResult.response.usage?.input_tokens ?? 0);
+  outputTokens += (globalResult.response.usage?.output_tokens ?? 0);
 
   const global: GlobalDecisions = {
     family: { choice: asChoice(globalResult.response.answers.style_family).choice as any, probabilities: asChoice(globalResult.response.answers.style_family).probabilities, confidence: asChoice(globalResult.response.answers.style_family).confidence },
@@ -265,8 +265,8 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
 
   const beatDecisions: BeatDecision[] = beatResults.map(({ beat, result }) => {
     latencies.push(result.latencyMs);
-    inputTokens += result.response.usage.input_tokens;
-    outputTokens += result.response.usage.output_tokens;
+    inputTokens += (result.response.usage?.input_tokens ?? 0);
+    outputTokens += (result.response.usage?.output_tokens ?? 0);
     const a = result.response.answers;
     const emphasisAns = a.emphasis ? asChoice(a.emphasis) : null;
     return {

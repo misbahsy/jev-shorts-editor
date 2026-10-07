@@ -26,7 +26,7 @@ This runs on macOS only. The renderer uses WebKit and the face tracker uses Appl
 | Node.js 20.11 or later | [nodejs.org](https://nodejs.org) or `brew install node` |
 | ffmpeg and ffprobe | `brew install ffmpeg` |
 | parakeet-mlx (local speech to text) | `uv tool install parakeet-mlx` |
-| A TypeSafe API key (for Jev) | [typesafe.ai](https://typesafe.ai) |
+| A TypeSafe API key (for Jev), or a LiteLLM gateway that has one | [typesafe.ai](https://typesafe.ai) |
 | A Groq API key | [console.groq.com](https://console.groq.com) |
 
 Transcription runs on your machine. The first run downloads the parakeet model (`mlx-community/parakeet-tdt-0.6b-v3`), which takes a minute. If `parakeet-mlx` is not on your `PATH`, set `PARAKEET_BIN` to its full path.
@@ -80,6 +80,31 @@ npm run short -- --in input.mp4 --out short.mp4
 | `--progress-json` | Print one JSON event per line on stdout and send human logs to stderr. Useful if you are driving this from another app. |
 
 `--plan` and `--film` are handy when you are changing the look of templates. Plan once, then rerender as often as you like without calling any API.
+
+## Using a LiteLLM gateway
+
+By default the editor calls TypeSafe directly. If you already run a [LiteLLM](https://github.com/BerriAI/litellm) proxy for your keys, budgets and logs, you can send the Jev calls through its `/v1/decisions` route instead.
+
+1. Start LiteLLM with a model group for Jev. `litellm.config.example.yaml` in this repo is a minimal config:
+
+   ```bash
+   TYPESAFE_API_KEY=... LITELLM_MASTER_KEY=sk-... litellm --config litellm.config.example.yaml --port 4000
+   ```
+
+2. Add these to `.env`:
+
+   ```bash
+   LITELLM_BASE_URL=http://localhost:4000
+   LITELLM_API_KEY=sk-...        # the master key, or a virtual key from the proxy
+   JEV_MODEL=jev                 # optional, the model_name in your LiteLLM config
+   ```
+
+When `LITELLM_BASE_URL` is set, the editor no longer needs `TYPESAFE_API_KEY`; the proxy holds it. Groq calls still go straight to Groq.
+
+A few things to know:
+
+- The `/v1/decisions` route was merged into LiteLLM's `main` branch in early October 2026 and is not in a tagged release yet. Install LiteLLM from source until a release includes it.
+- An open LiteLLM pull request ([#44955](https://github.com/BerriAI/litellm/pull/44955)) would switch this route to a different request format. If your proxy has that change, requests fail with a 400 and the editor tells you the gateway expects the newer format. Direct mode keeps working either way.
 
 ## How it works
 

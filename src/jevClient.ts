@@ -1,12 +1,12 @@
 /**
- * Plain-fetch client for TypeSafe's Jev API (POST /v1/systemone).
- * Field names verified against https://docs.typesafe.ai/api.md and the
- * per-primitive docs (noul/choice/score) on 2026-09-17. See that fetch's
- * captured copy in the spike report for the exact shapes.
+ * Plain-fetch client for Jev decision requests. Talks either to TypeSafe's API
+ * directly (POST /v1/systemone) or to a LiteLLM gateway's POST /v1/decisions,
+ * which takes the same { model, state, questions } body and returns the same
+ * answers. Field names verified against https://docs.typesafe.ai/api.md and
+ * LiteLLM's litellm/types/decisions.py.
  */
 
-const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
-const MODEL = "jev-latest";
+import type { JevTarget } from "./env";
 
 export interface NoulQuestion {
   type: "noul";
@@ -44,14 +44,15 @@ export type Answer = NoulAnswer | ChoiceAnswer | ScoreAnswer;
 export interface SystemOneResponse {
   model: string;
   answers: Record<string, Answer>;
-  usage: { input_tokens: number; output_tokens: number };
+  // LiteLLM's /v1/decisions may return usage: null.
+  usage: { input_tokens: number; output_tokens: number } | null;
 }
 
 export class JevHttpError extends Error {
   status: number;
   body: string;
-  constructor(status: number, body: string) {
-    super(`Jev HTTP ${status}`);
+  constructor(status: number, body: string, hint = "") {
+    super(`Jev HTTP ${status}${hint ? `: ${hint}` : ""}`);
     this.status = status;
     this.body = body;
   }
@@ -71,14 +72,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
 
+/** Explains the one gateway failure that is not obvious from the status code. */
+function gatewayHint(target: JevTarget, status: number, body: string): string {
+  if (target.via !== "litellm" || status !== 400) return "";
+  if (/\binput\b/.test(body)) {
+    return "this LiteLLM gateway expects the newer OpenAI-style Decisions body (input, questions array), which this client does not send yet";
+  }
+  if (/model/i.test(body)) {
+    return `check that the gateway has a model group named "${target.model}" (set JEV_MODEL to change it)`;
+  }
+  return "";
+}
+
 /**
- * POST { state, model, questions } to /v1/systemone. Retries up to
+ * POST { state, model, questions } to the target. Retries up to
  * MAX_TRIES total attempts with exponential backoff (+ jitter) on 429/529
  * and on network/timeout errors. Per-request timeout is 30s (aborted via
  * AbortController; counts as a retryable failure, not a hang).
  */
 export async function callSystemOne(
-  apiKey: string,
+  target: JevTarget,
   state: unknown,
   questions: Record<string, Question>,
 ): Promise<CallResult> {
@@ -91,13 +104,13 @@ export async function callSystemOne(
     const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     const reqStart = Date.now();
     try {
-      const res = await fetch(ENDPOINT, {
+      const res = await fetch(target.url, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${target.apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ state, model: MODEL, questions }),
+        body: JSON.stringify({ state, model: target.model, questions }),
         signal: controller.signal,
       });
       clearTimeout(timer);
@@ -109,7 +122,7 @@ export async function callSystemOne(
           lastErr = new JevHttpError(res.status, text.slice(0, 2000));
           continue;
         }
-        throw new JevHttpError(res.status, text.slice(0, 2000));
+        throw new JevHttpError(res.status, text.slice(0, 2000), gatewayHint(target, res.status, text));
       }
       const parsed = JSON.parse(text) as SystemOneResponse;
       return {
