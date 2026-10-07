@@ -23,7 +23,7 @@ import { fillCopy } from "./copy";
 import { finalize } from "./finalize";
 import { computeGeometry } from "./geometry";
 import { cleanSource, type CleanResult } from "./clean";
-import { DEFAULT_HOOK_STYLE, applyHookStructure, buildHookPlan, hookOpeningText, leakTimes, pickHookEnd } from "./hook";
+import { DEFAULT_HOOK_STYLE, applyHookStructure, buildHookPlan, headTopFromFace, hookOpeningText, leakTimes, pickHookEnd } from "./hook";
 import { buildCutout } from "./matte";
 import type { ShortPlan } from "./types";
 import type { Word } from "./transcribe";
@@ -204,6 +204,7 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
       endSec: hookEnd,
       cutout: cut,
       faceTopFrac: geometry.full.face.h > 0 ? geometry.full.face.y / plan.output.height : 0.2,
+      headTopFrac: geometry.full.face.h > 0 ? headTopFromFace(geometry.full.face, plan.output.height) : undefined,
     });
     plan.fx = { leaks: leakTimes(plan.beats, hookEnd) };
   }

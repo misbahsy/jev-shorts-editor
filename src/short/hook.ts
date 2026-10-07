@@ -228,6 +228,29 @@ export function frontFallback(bound: BoundHook, faceTopFrac: number): BoundHook 
   return { presetId: bound.presetId, preset };
 }
 
+/**
+ * The presets were authored for a head whose top sits near 0.25 of the frame height. Our framing is
+ * tighter, so a giant word at its authored y is mostly hidden by head and shoulders (only the first
+ * and last letters show). With a cut-out, move each giant behind layer up so its centre sits just
+ * above the top of the head (hair covers only the lower part of the letters), clamped under the
+ * platform's top UI band. Small ghost-style layers (y < 0.2) already sit up there and are kept.
+ */
+export function placeBehindHead(bound: BoundHook, headTopFrac: number): BoundHook {
+  const preset = JSON.parse(JSON.stringify(bound.preset)) as Record<string, any>;
+  for (const l of preset.layers as any[]) {
+    if (!isBehind(l) || (l.y ?? 0.5) < 0.2) continue;
+    const capH = (l.size ?? 0.18) * 0.78;
+    const minCenter = 0.055 + capH / 2;
+    l.y = Math.round(Math.max(minCenter, headTopFrac + 0.045) * 1000) / 1000;
+  }
+  return { presetId: bound.presetId, preset };
+}
+
+/** Top of the head (hair) as a fraction of frame height, estimated from the padded face box. */
+export function headTopFromFace(face: { y: number; h: number }, frameH = 1920): number {
+  return clamp((face.y - 0.25 * face.h) / frameH, 0.04, 0.5);
+}
+
 export function hasBehindLayer(preset: Record<string, any>): boolean {
   return ((preset.layers ?? []) as any[]).some(isBehind);
 }
@@ -342,6 +365,8 @@ export function buildHookPlan(args: {
   endSec: number;
   cutout: { ok: boolean; frames: number; reason?: string };
   faceTopFrac: number;
+  /** Top of the head as a fraction of frame height; moves the giant word up behind the hair. */
+  headTopFrac?: number;
 }): HookPlan {
   const presetId = HOOK_PRESET_BY_STYLE[args.style];
   const text = normalizeHookCopy(args.copy, args.opening);
@@ -352,6 +377,8 @@ export function buildHookPlan(args: {
   if (needs && !cutout) {
     bound = frontFallback(bound, args.faceTopFrac);
     fallbackReason = args.cutout.reason ?? "no cut-out";
+  } else if (needs && args.headTopFrac !== undefined) {
+    bound = placeBehindHead(bound, args.headTopFrac);
   }
   return {
     style: args.style,

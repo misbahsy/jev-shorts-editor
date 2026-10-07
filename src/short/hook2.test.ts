@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { applyHookStructure, buildHookPlan, leakEnvelope, hasBehindLayer } from "./hook";
+import { applyHookStructure, buildHookPlan, leakEnvelope, hasBehindLayer, headTopFromFace, placeBehindHead, bindHook } from "./hook";
 import { judgeCoverage, hookWindowFilter } from "./matte";
 import { buildPrompt } from "./copy";
 import { inlineEngine, fontFaceCss, film24Config } from "./film/buildFilm";
@@ -138,4 +138,17 @@ test("hook24.js leakEnvelope matches hook.ts", () => {
   for (const t of [0, 4.9, 4.96, 5, 5.1, 5.34, 5.4, 9]) {
     assert.ok(Math.abs(js(t, [5]) - leakEnvelope(t, [5])) < 0.001, `t=${t}`);
   }
+});
+
+test("placeBehindHead lifts the giant word to the top of the head, under the top UI band; small ghost layers stay", () => {
+  assert.equal(headTopFromFace({ y: 383, h: 687 }), (383 - 0.25 * 687) / 1920);
+  const bound = bindHook("giant-word-behind-head", { word: "KILLED", line: "x" }, 3);
+  const moved = placeBehindHead(bound, 0.106);
+  const l = (moved.preset.layers as any[]).find(x => x.z === "behind-subject");
+  assert.ok(l.y < 0.2 && l.y >= 0.055 + (l.size * 0.78) / 2 - 1e-9);
+  const ghost = bindHook("giant-white-word-top-cropped-behind", { word: "CAMERA", line: "" }, 3);
+  const g = placeBehindHead(ghost, 0.3);
+  assert.deepEqual((g.preset.layers as any[]).map(x => x.y), (ghost.preset.layers as any[]).map(x => x.y));
+  const hp = buildHookPlan({ style: "giant_word", copy: { word: "STOP", line: "a" }, opening: "stop", endSec: 3, cutout: { ok: true, frames: 90 }, faceTopFrac: 0.2, headTopFrac: 0.106 });
+  assert.ok((hp.preset.layers as any[])[0].y < 0.2);
 });
