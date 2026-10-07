@@ -319,6 +319,12 @@
     });
     root.appendChild(captionsLayer);
     var captionRuntime = window.FilmCaptions.build(captionsLayer, plan);
+    // engine caption styles (24fps) are drawn by hook24.js above the hook layer instead
+    var engineCaps = !!(window.__FILM24 && window.__FILM24.caption);
+    if (engineCaps) captionsLayer.style.display = "none";
+
+    // ---- 24fps layers: opening hook (behind the speaker), engine captions, light leaks ----
+    var hook24 = window.FilmHook24 ? window.FilmHook24.build(root, plan) : null;
 
     // ---- transition layer ----
     var transitionLayer = el("div", {
@@ -385,10 +391,12 @@
       for (var i = 0; i < mounts.length; i++) {
         var m = mounts[i];
         var isActive = active && m.beat.id === active.id;
-        if (isActive) {
+        // a card that starts inside the opening hook only appears once the hook is over
+        var from = typeof m.beat.visualFrom === "number" ? m.beat.visualFrom : m.beat.start;
+        if (isActive && t >= from) {
           m.mount.style.display = "block";
-          var lt = t - m.beat.start;
-          var dur = beatDur(m.beat);
+          var lt = t - from;
+          var dur = Math.max(0.1, m.beat.end - from);
           try {
             m.def.update(m.inner, lt, dur, m.ctx);
           } catch (err) {
@@ -399,15 +407,26 @@
         }
       }
 
-      window.FilmCaptions.render(captionRuntime, t, active, plan);
+      if (!engineCaps) window.FilmCaptions.render(captionRuntime, t, active, plan);
       window.FilmTransitions.render(transitionLayer, t, plan);
+      var pending = hook24 ? window.FilmHook24.render(hook24, t, active, plan) : null;
 
       if (progressBar) {
         progressBar.style.width = duration > 0 ? (clamp(t / duration, 0, 1) * 100 + "%") : "0%";
       }
+      // a Promise only while an fg cut-out frame is still decoding; the sidecar awaits it
+      return pending || undefined;
     };
 
-    window.__filmReady = true;
+    if (hook24) {
+      // fonts for the engine layers are embedded as data URIs; wait until they are usable
+      hook24.ready.then(
+        function () { window.__filmReady = true; },
+        function () { window.__filmReady = true; }
+      );
+    } else {
+      window.__filmReady = true;
+    }
   };
 
   window.Film = Film;

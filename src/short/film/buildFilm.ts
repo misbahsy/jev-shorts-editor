@@ -4,13 +4,16 @@
 // film/templates/*.js + window.__PLAN into one self-contained transparent HTML file.
 import fs from "node:fs";
 import path from "node:path";
+import { captionWords, leakPreset, resolveCaptionPreset } from "../hook";
 
 const FILM_DIR = __dirname;
+const ENGINE_FILE = path.join(FILM_DIR, "vendor", "engine.js");
+const FONT_DIR = path.join(FILM_DIR, "vendor", "fonts");
 
 // Load order: core (defines Film + placeholder fx.text) -> themes (CSS tokens) ->
 // effects (fills in Film.fx.text) -> captions (uses Film.fx.text) -> transitions ->
 // every registered template (needs Film.registerTemplate from core).
-const CORE_FILES = ["core.js", "themes.js", "effects.js", "captions.js", "transitions.js"];
+const CORE_FILES = ["core.js", "themes.js", "effects.js", "captions.js", "transitions.js", "hook24.js"];
 
 function readTemplateFiles(): { name: string; src: string }[] {
   const dir = path.join(FILM_DIR, "templates");
@@ -22,12 +25,91 @@ function readTemplateFiles(): { name: string; src: string }[] {
     .map((f) => ({ name: f, src: fs.readFileSync(path.join(dir, f), "utf8") }));
 }
 
+/**
+ * The vendored 24fps engine as a classic script: `export`s stripped, wrapped in an IIFE that sets
+ * window.Film24, and loadFonts patched to wait on the embedded @font-face rules instead of loading
+ * a Google Fonts stylesheet (nothing may touch the network at render time).
+ */
+export function inlineEngine(src = fs.readFileSync(ENGINE_FILE, "utf8")): string {
+  const body = src.replace(/^export\s+/gm, "");
+  if (/^\s*import\s/m.test(body)) throw new Error("24fps engine unexpectedly imports a module");
+  const head = 'function loadFonts(families) {\n  if (typeof document === "undefined") return;';
+  if (!body.includes(head)) throw new Error("24fps engine: loadFonts changed, update the patch in buildFilm.ts");
+  const patched = body.replace(
+    head,
+    head +
+      '\n  fontsPending = Promise.all([fontsPending, ...families.filter((f) => f && f.family).map((f) => document.fonts.load(`${f.italic ? "italic " : ""}${f.weight || 400} 1em "${f.family}"`).catch(() => null))]);' +
+      "\n  return fontsPending;"
+  );
+  return `window.Film24 = (function () {\n${patched}\nreturn { mount, timeWords, loadFonts, VERSION };\n})();`;
+}
+
+interface FontRef {
+  family?: string;
+  weight?: number;
+  italic?: boolean;
+}
+
+function collectFonts(node: unknown, out: Map<string, FontRef>): void {
+  if (Array.isArray(node)) {
+    for (const n of node) collectFonts(n, out);
+  } else if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+      if ((k === "font" || k === "emphasisFont") && v && typeof v === "object" && typeof (v as FontRef).family === "string") {
+        const f = v as FontRef;
+        out.set(fontKey(f), f);
+      }
+      collectFonts(v, out);
+    }
+  }
+}
+
+export const fontKey = (f: FontRef): string => `${f.family}|${f.weight || 400}|${f.italic ? 1 : 0}`;
+
+/** @font-face rules (data URIs) for exactly the families the given presets use. */
+export function fontFaceCss(presets: unknown[], fontDir = FONT_DIR): string {
+  const need = new Map<string, FontRef>();
+  collectFonts(presets, need);
+  const index = JSON.parse(fs.readFileSync(path.join(fontDir, "fonts.json"), "utf8")) as Record<string, string>;
+  const css: string[] = [];
+  for (const [key, f] of need) {
+    const file = index[key];
+    if (!file) throw new Error(`24fps font not vendored: ${key}`);
+    const b64 = fs.readFileSync(path.join(fontDir, file)).toString("base64");
+    css.push(
+      `@font-face{font-family:"${f.family}";font-weight:${f.weight || 400};font-style:${f.italic ? "italic" : "normal"};font-display:block;src:url(data:font/woff2;base64,${b64}) format("woff2");}`
+    );
+  }
+  return css.join("\n");
+}
+
+/** What window.__FILM24 carries: the resolved engine caption preset + words and the leak preset. */
+export function film24Config(plan: any): { caption: Record<string, any> | null; captionWords: unknown[] | null; leak: Record<string, any> | null } {
+  const caption = plan?.style?.captionStyle ? resolveCaptionPreset(plan.style.captionStyle) : null;
+  const leaks: number[] = plan?.fx?.leaks ?? [];
+  return {
+    caption,
+    captionWords: caption ? captionWords(plan.words ?? []) : null,
+    leak: leaks.length ? leakPreset() : null,
+  };
+}
+
 export function buildFilm(plan: unknown, outHtmlPath: string): void {
   const parts: string[] = [];
   parts.push("<!doctype html>");
   parts.push(
     '<html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:transparent;width:1080px;height:1920px;overflow:hidden;}*{box-sizing:border-box;}</style></head><body>'
   );
+
+  // the 24fps engine (hook, engine captions, light leaks) with the fonts it needs embedded
+  const cfg24 = film24Config(plan);
+  const hookPreset = (plan as any)?.hook?.preset;
+  const css = fontFaceCss([hookPreset, cfg24.caption, cfg24.leak].filter(Boolean));
+  if (css) parts.push(`<style>${css}</style>`);
+  parts.push("<script>");
+  parts.push(inlineEngine());
+  parts.push(`window.__FILM24 = ${JSON.stringify(cfg24).replace(/<\/script/gi, "<\\/script")};`);
+  parts.push("</script>");
 
   parts.push("<script>");
   for (const f of CORE_FILES) {
