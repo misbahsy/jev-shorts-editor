@@ -21,7 +21,19 @@ export type StyleFamilyId =
 
 export type AccentId = "blue" | "green" | "yellow" | "orange" | "red" | "pink" | "purple" | "cyan";
 
-export type CaptionStyleId = "word_pop" | "single_word" | "karaoke_line" | "boxed_highlight" | "typewriter_line";
+export type CaptionStyleId =
+  | "word_pop"
+  | "single_word"
+  | "karaoke_line"
+  | "boxed_highlight"
+  | "typewriter_line"
+  // 24fps.dev caption presets, drawn by the vendored engine (see hook.ts CAPTION24)
+  | "anton_karaoke"
+  | "archivo_chip"
+  | "inter_editorial";
+
+/** Opening-hook looks, each backed by one 24fps preset (hook.ts HOOK_PRESET_BY_STYLE). */
+export type HookStyleId = "giant_word" | "giant_number" | "giant_question" | "focus_word" | "ghost_topic";
 
 export type TextEffectId =
   | "typewriter"
@@ -142,6 +154,8 @@ export interface GlobalDecisions {
   captionStyle: { choice: CaptionStyleId; probabilities: Record<string, number>; confidence: number };
   energy: { score: number; probabilities: Record<string, number>; confidence: number };
   progressBar: { noul: number };
+  /** ADDITIVE: opening-hook look (absent in decisions made before the hook stage existed). */
+  hookStyle?: { choice: HookStyleId; probabilities: Record<string, number>; confidence: number };
 }
 
 export interface BeatDecision {
@@ -188,6 +202,8 @@ export interface Copy {
   beats: Record<string, Record<string, unknown>>;
   corrections: { i: number; text: string }[];
   latencyMs: number;
+  /** ADDITIVE: raw hook copy from the model (validated in hook.ts normalizeHookCopy). */
+  hook?: { word?: unknown; line?: unknown };
 }
 
 // ---- final plan ----
@@ -211,6 +227,28 @@ export interface Beat {
   };
   transitionIn: TransitionId;
   punchIn: boolean;
+  /** ADDITIVE: the card appears only from this OUTPUT time (set on a first beat that starts inside
+   *  the opening hook, so the hook owns the first seconds and the card follows it). */
+  visualFrom?: number;
+}
+
+/** ADDITIVE: the opening hook, a 24fps text preset (often behind the speaker) over the first seconds. */
+export interface HookPlan {
+  style: HookStyleId;
+  presetId: string;
+  /** OUTPUT seconds the hook lasts (a sentence boundary near 3 s). */
+  endSec: number;
+  /** true = a person matte exists, so behind-subject layers really sit behind the speaker. */
+  cutout: boolean;
+  /** Frames of the person cut-out, fg/00000.png .. beside film.html (0 without a cut-out). */
+  fgFrames: number;
+  fgDir: string;
+  word: string;
+  line: string;
+  /** The engine text preset with word and line bound in. */
+  preset: Record<string, unknown>;
+  /** Why the front-of-speaker fallback was used, when it was. */
+  fallbackReason?: string;
 }
 
 export interface ShortPlan {
@@ -238,4 +276,8 @@ export interface ShortPlan {
   /** ADDITIVE: what the clean stage did (absent with --no-clean). */
   clean?: CleanStats;
   timings?: Record<string, number>;
+  /** ADDITIVE: the opening hook (absent = no hook stage). */
+  hook?: HookPlan;
+  /** ADDITIVE: overlay-only effects. `leaks` = OUTPUT times of warm light-leak flashes at section changes. */
+  fx?: { leaks: number[] };
 }
