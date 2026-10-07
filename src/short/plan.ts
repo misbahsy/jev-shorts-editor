@@ -1,24 +1,30 @@
 /**
- * Orchestrator: transcribe ‖ perceive -> decide -> assembleStructure -> fillCopy -> finalize.
+ * Orchestrator: [clean] -> transcribe ‖ perceive -> decide -> assembleStructure -> fillCopy -> finalize.
  * Structure (layout/template/effects/transition/punchIn) is fully decided BEFORE copy is
  * generated, so fillCopy only ever writes fields for the template a beat will keep — see
  * structure.ts for why. Writes every intermediate artifact + plan.json into workDir, with
  * per-stage timings (transcribe/perceive run in parallel but are timed separately).
  *
- * CLI: npx tsx src/short/plan.ts --in <mp4> --work <dir> [--title "..."]
+ * With the clean stage on (the default) the raw clip is transcribed once, retakes / dead air /
+ * fillers are cut into work/clean.mp4, and every later stage sees clean.mp4 and the remapped
+ * words, so output time still equals source time downstream. --no-clean keeps the raw clip.
+ *
+ * CLI: npx tsx src/short/plan.ts --in <mp4> --work <dir> [--title "..."] [--no-clean]
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { transcribe } from "./transcribe";
-import { perceive } from "./perceive";
+import { perceive, type Perception } from "./perceive";
 import { decide, buildBeats } from "./decide";
 import { assembleStructure } from "./structure";
 import { holdMerge, extendOverDeadRuns } from "./hold";
 import { fillCopy } from "./copy";
 import { finalize } from "./finalize";
 import { computeGeometry } from "./geometry";
+import { cleanSource, type CleanResult } from "./clean";
 import type { ShortPlan } from "./types";
+import type { Word } from "./transcribe";
 
 interface Probe {
   durationSec: number;
@@ -57,31 +63,63 @@ function probeSource(srcPath: string): Probe {
   };
 }
 
-export async function planShort(srcPath: string, workDir: string, title = "Untitled"): Promise<ShortPlan> {
+export interface PlanOptions {
+  /** Run the clean stage (default true). false = the original behavior, raw clip in and out. */
+  clean?: boolean;
+  /** Progress hook for the clean stage's own log lines. */
+  log?: (m: string) => void;
+}
+
+export async function planShort(srcPath: string, workDir: string, title = "Untitled", options: PlanOptions = {}): Promise<ShortPlan> {
   mkdirSync(workDir, { recursive: true });
   const timings: Record<string, number> = {};
   const t0 = Date.now();
+  const useClean = options.clean !== false;
 
-  const probe = probeSource(srcPath);
+  let probe = probeSource(srcPath);
   timings.probeMs = Date.now() - t0;
 
-  // transcribe ‖ perceive — run concurrently but time each independently
-  let transcribeMs = 0;
+  let words: Word[];
+  let perception: Perception;
+  let clean: CleanResult | null = null;
+  let perceiveSrc = srcPath;
   let perceiveMs = 0;
-  const [words, perception] = await Promise.all([
-    (async () => {
-      const t = Date.now();
-      const r = await transcribe(srcPath, workDir);
-      transcribeMs = Date.now() - t;
-      return r;
-    })(),
-    (async () => {
-      const t = Date.now();
-      const r = await perceive(srcPath, workDir);
-      perceiveMs = Date.now() - t;
-      return r;
-    })(),
-  ]);
+  let transcribeMs = 0;
+
+  if (useClean) {
+    // the raw clip is transcribed once (inside cleanSource); perceive then runs on the cleaned clip
+    const tClean = Date.now();
+    clean = await cleanSource(srcPath, workDir, { log: options.log });
+    timings.cleanMs = Date.now() - tClean;
+    words = clean.words;
+    perceiveSrc = clean.cleanPath;
+    probe = { durationSec: clean.durationSec, width: clean.width, height: clean.height, fps: clean.fps };
+    const tPerceive = Date.now();
+    perception = await perceive(perceiveSrc, workDir);
+    perceiveMs = Date.now() - tPerceive;
+  } else {
+    // transcribe ‖ perceive — run concurrently but time each independently
+    let tm = 0;
+    let pm = 0;
+    const [w, p] = await Promise.all([
+      (async () => {
+        const t = Date.now();
+        const r = await transcribe(srcPath, workDir);
+        tm = Date.now() - t;
+        return r;
+      })(),
+      (async () => {
+        const t = Date.now();
+        const r = await perceive(srcPath, workDir);
+        pm = Date.now() - t;
+        return r;
+      })(),
+    ]);
+    words = w;
+    perception = p;
+    transcribeMs = tm;
+    perceiveMs = pm;
+  }
   timings.transcribeMs = transcribeMs;
   timings.perceiveMs = perceiveMs;
 
@@ -122,8 +160,13 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
     geometry,
     decisions,
     copy,
-    source: { path: srcPath, durationSec: probe.durationSec, width: probe.width, height: probe.height, fps: probe.fps },
+    source: { path: perceiveSrc, durationSec: probe.durationSec, width: probe.width, height: probe.height, fps: probe.fps },
   });
+  if (clean) {
+    plan.cuts = clean.cutPoints;
+    plan.loudness = clean.loudness;
+    plan.clean = clean.stats;
+  }
   timings.finalizeMs = Date.now() - tFinalize;
   timings.totalMs = Date.now() - t0;
 
@@ -133,25 +176,27 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
   return plan;
 }
 
-function parseArgs(argv: string[]): { in: string; work: string; title?: string } {
+function parseArgs(argv: string[]): { in: string; work: string; title?: string; clean: boolean } {
   const out: Record<string, string> = {};
+  let clean = true;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--in") out.in = argv[++i];
     else if (a === "--work") out.work = argv[++i];
     else if (a === "--title") out.title = argv[++i];
+    else if (a === "--no-clean") clean = false;
   }
   if (!out.in || !out.work) {
-    console.error("usage: plan.ts --in <mp4> --work <dir> [--title \"...\"]");
+    console.error("usage: plan.ts --in <mp4> --work <dir> [--title \"...\"] [--no-clean]");
     process.exit(1);
   }
-  return out as { in: string; work: string; title?: string };
+  return { ...(out as { in: string; work: string; title?: string }), clean };
 }
 
 const isMain = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 if (isMain) {
   const args = parseArgs(process.argv.slice(2));
-  planShort(args.in, args.work, args.title ?? "Untitled")
+  planShort(args.in, args.work, args.title ?? "Untitled", { clean: args.clean })
     .then(plan => {
       console.log(`Wrote plan.json: ${plan.beats.length} beats, ${plan.sfx.length} sfx, timings=${JSON.stringify(plan.timings)}`);
     })

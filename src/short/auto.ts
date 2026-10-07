@@ -5,7 +5,10 @@
 //
 //   npx tsx src/short/auto.ts --in <src.mp4> --out <out.mp4> [--work <dir>] \
 //     [--plan <plan.json>] [--film <film.html>] [--workers N] [--title "..."] \
-//     [--preview <preview.html>] [--no-export] [--progress-json]
+//     [--preview <preview.html>] [--no-export] [--no-clean] [--progress-json]
+//
+// By default the raw clip is cleaned first (retakes, dead air and filler sounds cut into
+// work/clean.mp4) and everything after that works on the cleaned clip. --no-clean skips it.
 //
 // planShort and buildFilm are loaded via dynamic import() so this file still runs
 // (in --plan/--film mode) even if plan.ts/film/buildFilm.ts don't exist yet.
@@ -14,13 +17,15 @@
 // With --progress-json, stdout carries ONLY newline-delimited JSON events and all
 // human logging moves to stderr, so a host can parse stdout without heuristics:
 //
-//   {"stage":"probe"|"analyze"|"decide"|"structure"|"copy"|"film"|"preview"
+//   {"stage":"probe"|"analyze"|"clean"|"decide"|"structure"|"copy"|"film"|"preview"
 //            |"frames"|"encode"|"done"|"error",
 //    "label": "<human-readable line>",
 //    "pct"?: 0..1,                  // present on "frames"
 //    "previewPath"?: "<abs path>",  // present on "preview" and "done"
 //    "videoPath"?:   "<abs path>",  // present on "done" unless --no-export
 //    "planPath"?:    "<abs path>",  // present on "done"
+//    "clean"?:       {beforeSec, afterSec, removedSec: {retake,silence,filler,lead,tail},
+//                     retakesCut, fillersCut}, // present on the finishing "clean" event and on "done"
 //    "error"?:       "<message>"}   // present on "error"
 //
 // The "preview" event is the load-bearing one: it fires once the film page exists,
@@ -36,11 +41,12 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { ShortPlan } from "./types";
+import type { CleanStats } from "./clean/types";
 import { renderShort, DEFAULT_WORKERS } from "./render";
 
 interface ProgressEvent {
   stage:
-    | "probe" | "analyze" | "decide" | "structure" | "copy" | "film"
+    | "probe" | "analyze" | "clean" | "decide" | "structure" | "copy" | "film"
     | "preview" | "frames" | "encode" | "done" | "error";
   label: string;
   pct?: number;
@@ -48,7 +54,26 @@ interface ProgressEvent {
   videoPath?: string;
   planPath?: string;
   error?: string;
+  clean?: CleanSummary;
   timings?: Record<string, number>;
+}
+
+type CleanSummary = Pick<CleanStats, "beforeSec" | "afterSec" | "removedSec" | "retakesCut" | "fillersCut">;
+
+function cleanSummary(c: CleanStats): CleanSummary {
+  return { beforeSec: c.beforeSec, afterSec: c.afterSec, removedSec: c.removedSec, retakesCut: c.retakesCut, fillersCut: c.fillersCut };
+}
+
+/** "271.2s -> 48.4s: retakes 65.1s (11), silence 130.0s, lead 14.2s, tail 12.9s, fillers 0.8s (1)" */
+function describeClean(c: CleanSummary): string {
+  const r = c.removedSec;
+  const parts: string[] = [];
+  if (r.retake > 0.05) parts.push(`retakes ${r.retake.toFixed(1)}s (${c.retakesCut} cut)`);
+  if (r.silence > 0.05) parts.push(`dead air ${r.silence.toFixed(1)}s`);
+  if (r.lead > 0.05) parts.push(`lead ${r.lead.toFixed(1)}s`);
+  if (r.tail > 0.05) parts.push(`tail ${r.tail.toFixed(1)}s`);
+  if (r.filler > 0.05 || c.fillersCut) parts.push(`fillers ${r.filler.toFixed(1)}s (${c.fillersCut} cut)`);
+  return `${c.beforeSec.toFixed(1)}s -> ${c.afterSec.toFixed(1)}s` + (parts.length ? `: ${parts.join(", ")}` : "");
 }
 
 /** Emits the JSON event stream on stdout when --progress-json, otherwise a no-op. */
@@ -64,6 +89,7 @@ function makeEmitter(enabled: boolean): (e: ProgressEvent) => void {
  */
 function watchPlanArtifacts(workDir: string, emit: (e: ProgressEvent) => void): () => void {
   const steps: { file: string; stage: ProgressEvent["stage"]; label: string }[] = [
+    { file: "clean.json", stage: "clean", label: "Cut the retakes and dead air" },
     { file: "decisions.json", stage: "decide", label: "Jev picked the style and the card for each beat" },
     { file: "structure.json", stage: "structure", label: "Laying out the shots" },
     { file: "copy.json", stage: "copy", label: "Writing the on-screen text" },
@@ -75,6 +101,16 @@ function watchPlanArtifacts(workDir: string, emit: (e: ProgressEvent) => void): 
       if (seen.has(s.file)) continue;
       if (existsSync(path.join(workDir, s.file))) {
         seen.add(s.file);
+        if (s.file === "clean.json") {
+          try {
+            const c = JSON.parse(readFileSync(path.join(workDir, s.file), "utf8")) as { stats: CleanStats };
+            const sum = cleanSummary(c.stats);
+            emit({ stage: "clean", label: `Cut the retakes and dead air (${describeClean(sum)})`, clean: sum });
+            continue;
+          } catch {
+            /* half-written file: fall through to the plain label */
+          }
+        }
         emit({ stage: s.stage, label: s.label });
       }
     }
@@ -126,7 +162,7 @@ async function main() {
     console.error(
       "Usage: auto.ts --in <src.mp4> --out <out.mp4> [--work <dir>] [--plan <plan.json>] " +
         "[--film <film.html>] [--workers N] [--title \"...\"] [--preview <preview.html>] " +
-        "[--no-export] [--progress-json]",
+        "[--no-export] [--no-clean] [--progress-json]",
     );
     process.exit(1);
   }
@@ -150,6 +186,7 @@ async function main() {
         ? path.join(workDir, "preview.html")
         : null;
   const wantExport = !args["no-export"];
+  const wantClean = !args["no-clean"];
 
   const wallStart = Date.now();
   const rows: TimingRow[] = [];
@@ -180,18 +217,22 @@ async function main() {
     const t0 = Date.now();
     // Drop artifacts from an earlier run in this workDir so the watcher reports THIS
     // run's progress instead of firing every stage instantly off stale files.
-    for (const f of ["decisions.json", "structure.json", "copy.json", "plan.json"]) {
+    for (const f of ["clean.json", "clean.mp4", "decisions.json", "structure.json", "copy.json", "plan.json"]) {
       try {
         rmSync(path.join(workDir, f));
       } catch {
         /* absent is the normal case */
       }
     }
-    emit({ stage: "analyze", label: "Transcribing and reading the frames" });
+    if (wantClean) emit({ stage: "clean", label: "Transcribing, then cutting retakes and dead air" });
+    else emit({ stage: "analyze", label: "Transcribing and reading the frames" });
     const stopWatch = watchPlanArtifacts(workDir, emit);
     const { planShort } = await import("./plan");
     try {
-      plan = await planShort(srcPath, workDir, (args.title as string) || undefined);
+      plan = await planShort(srcPath, workDir, (args.title as string) || undefined, {
+        clean: wantClean,
+        log: (m) => process.stderr.write(`[clean] ${m}\n`),
+      });
     } finally {
       stopWatch();
     }
@@ -222,7 +263,7 @@ async function main() {
   if (previewPath) {
     const t0 = Date.now();
     const { buildPreview } = await import("./preview");
-    buildPreview(planPath, filmHtmlPath, srcPath, previewPath);
+    buildPreview(planPath, filmHtmlPath, plan.clean ? plan.source.path : srcPath, previewPath);
     rows.push({ stage: "preview", ms: Date.now() - t0 });
     emit({ stage: "preview", label: "Ready to watch", previewPath });
     say(`preview: ${previewPath}`);
@@ -241,10 +282,12 @@ async function main() {
   if (!wantExport) {
     const totalWallMs = Date.now() - wallStart;
     if (!jsonMode) printTimingTable(rows);
+    if (plan.clean) say(`clean: ${describeClean(plan.clean)}`);
     say(`wall clock: ${(totalWallMs / 1000).toFixed(2)}s (no export)`);
     emit({
       stage: "done",
       label: "Short is ready to watch",
+      clean: plan.clean ? cleanSummary(plan.clean) : undefined,
       previewPath: previewPath ?? undefined,
       planPath,
       timings: Object.fromEntries(rows.map((r) => [r.stage, r.ms])),
@@ -275,6 +318,7 @@ async function main() {
 
   const totalWallMs = Date.now() - wallStart;
   if (!jsonMode) printTimingTable(rows);
+  if (plan.clean) say(`clean: ${describeClean(plan.clean)}`);
   say(`workers used: ${render.workers}, frames: ${render.frames}`);
   say(`wall clock: ${(totalWallMs / 1000).toFixed(2)}s`);
   say(`output: ${outPath}`);
@@ -290,6 +334,7 @@ async function main() {
   emit({
     stage: "done",
     label: "Short exported",
+    clean: plan.clean ? cleanSummary(plan.clean) : undefined,
     videoPath: outPath,
     previewPath: previewPath ?? undefined,
     planPath,

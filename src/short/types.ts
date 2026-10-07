@@ -5,6 +5,8 @@
  * auto.ts, built by other agents) get one source of truth.
  */
 
+import type { CleanStats, LoudnormMeasure } from "./clean/types";
+
 // ---- option-menu id unions (contract "Option menus" section) ----
 
 export type StyleFamilyId =
@@ -228,5 +230,12 @@ export interface ShortPlan {
   words: Word[];
   beats: Beat[];
   sfx: { type: "whoosh" | "pop" | "ding" | "riser" | "impact"; at: number; gainDb: number }[];
+  /** ADDITIVE: OUTPUT-time seconds of every visible cut the clean stage made (already collapsed so
+   *  cuts closer than ~1.5 s count once). render/preview alternate the framing at each one. */
+  cuts?: number[];
+  /** ADDITIVE: pass-1 loudnorm measurement of the clean source, fed to pass 2 in the final render. */
+  loudness?: LoudnormMeasure;
+  /** ADDITIVE: what the clean stage did (absent with --no-clean). */
+  clean?: CleanStats;
   timings?: Record<string, number>;
 }

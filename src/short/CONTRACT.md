@@ -43,6 +43,10 @@ Two speaker layouts, hard-switched in ffmpeg; the film page draws everything els
   — `face` is in OUTPUT px for that layout, already padded 12%. **Nothing may be drawn intersecting `face`.**
   `captionY` = center of the caption band, placed below the chin (face bottom + margin), never above 1580.
 - `punchIn`: for that beat the speaker crop is scaled 1.10 around the face center (hard cut in/out).
+- Cut framing: when the plan has `cuts`, the punched-in crop is 1.12 (`framing.ts`), and every cut flips
+  between the normal and the punched-in crop. `framing.ts` `buildShots` is the single shot list; render.ts
+  feeds it to ffmpeg and preview.ts embeds it, so both show the same framing. The face stays inside the
+  crop (centered on the face, clamped to the frame). A `split` shot keeps its top edge when it punches in.
 
 ## plan.json
 
@@ -57,6 +61,9 @@ interface ShortPlan {
   words: { i: number; text: string; start: number; end: number; emph?: boolean }[]; // text already ASR-corrected
   beats: Beat[];                            // contiguous, cover 0..duration
   sfx: { type: "whoosh"|"pop"|"ding"|"riser"|"impact"; at: number; gainDb: number }[];
+  cuts?: number[];                          // clean stage only: OUTPUT-time seconds of each visible cut
+  loudness?: LoudnormMeasure;               // clean stage only: loudnorm pass-1 numbers for the final render
+  clean?: CleanStats;                       // clean stage only: before/after duration, seconds per reason
   timings?: Record<string, number>;         // ms per stage, filled by auto.ts
 }
 interface Beat {
@@ -68,7 +75,30 @@ interface Beat {
 }
 ```
 In `full` layout only templates flagged `underChin: true` may appear (drawn inside `geometry.full.visualRect`);
-any other template forces `split`. No source cuts in v1: output time == source time.
+any other template forces `split`. After the clean stage, `plan.source.path` is `work/clean.mp4`, so
+output time still equals source time for every stage after it (see "Clean stage").
+
+## Clean stage (`clean/`)
+
+Runs first in `planShort`, unless `--no-clean`. Input is the raw clip; the raw clip is transcribed once,
+with precise word ends, and never looked at again after this stage.
+
+1. `retakes.ts` finds candidate retakes (a sentence or phrase said again, short adjacent stutters). Jev
+   confirms each one (`confirm.ts`, one noul question per candidate, cut at `JEV_CUT_THRESHOLD` 0.5). The
+   LAST take is kept; for a 2 to 4 word stutter the second occurrence is kept. If Jev is unavailable the
+   deterministic candidates with at least `FALLBACK_MIN_MATCH` matching words are cut instead, with a warning.
+2. `keep.ts` turns removed words, gaps and voiced non-word sounds into KEEP ranges. Gaps over 0.35 s shrink to
+   0.12 s after the previous word and 0.10 s before the next, the lead and tail trim to the same padding.
+   Edges snap to quiet audio and to frames, so no cut lands inside a word.
+3. `cut.ts` makes `work/clean.mp4` in one ffmpeg call: trim and atrim per KEEP range, 30 ms audio fades at
+   each join, concat, frame-accurate, h264_videotoolbox at a high bitrate and AAC 256k.
+4. `remap.ts` moves the surviving words onto the clean clock; `cutPoints` gives `plan.cuts`.
+5. `ffmpegTools.ts` measures loudnorm pass 1 on clean.mp4 (after a highpass at 80 Hz). The final render applies
+   pass 2 once, on the final mix, with `linear=true` and a -1 dBFS ceiling limiter.
+
+`work/clean.json` lists every cut as `{start, end, reason, text, jev?}` with `reason` one of `retake`,
+`silence`, `filler`, `lead`, `tail` (times are on the RAW clock), plus the KEEP ranges, every retake
+candidate with its score, and the stats. `npm test` covers the pure parts with synthetic word lists.
 
 ## Option menus (ids are the contract; descriptions for Jev live in `menus.ts`)
 

@@ -83,6 +83,19 @@ export const LOUDNESS_TARGET_TP = -1;
 export const LOUDNESS_TARGET_LRA = 11;
 export const HIGHPASS_HZ = 80;
 
+/**
+ * Second loudnorm pass: feeds the pass-1 numbers back with linear=true, so the result is one
+ * constant gain (no dynamic pumping). loudnorm resamples to 192 kHz internally, hence the aresample.
+ */
+export function loudnormPass2(m: LoudnormMeasure, sampleRate = 48000): string {
+  const f = (n: number) => n.toFixed(2);
+  return (
+    `loudnorm=I=${LOUDNESS_TARGET_I}:TP=${LOUDNESS_TARGET_TP}:LRA=${LOUDNESS_TARGET_LRA}` +
+    `:measured_I=${f(m.inputI)}:measured_TP=${f(m.inputTP)}:measured_LRA=${f(m.inputLRA)}` +
+    `:measured_thresh=${f(m.inputThresh)}:offset=${f(m.targetOffset)}:linear=true,aresample=${sampleRate}`
+  );
+}
+
 /** First loudnorm pass on the audio of `src`, after the same highpass the final render uses. */
 export function measureLoudnorm(src: string): LoudnormMeasure {
   const { stderr } = runCapture(

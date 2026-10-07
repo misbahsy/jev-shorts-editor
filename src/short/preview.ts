@@ -31,26 +31,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { ShortPlan, Rect } from "./types";
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-
-/** Mirrors render.ts's fullCropRect() exactly. */
-function fullCropRect(plan: ShortPlan, punchIn: boolean): Rect {
-  const base = plan.geometry.full.crop;
-  if (!punchIn) return base;
-  const srcW = plan.source.width;
-  const srcH = plan.source.height;
-  const faceCx = (plan.perception.face.x + plan.perception.face.w / 2) * srcW;
-  const faceCy = (plan.perception.face.y + plan.perception.face.h / 2) * srcH;
-  const w = base.w / 1.1;
-  const h = base.h / 1.1;
-  let x = faceCx - w / 2;
-  let y = faceCy - h / 2;
-  x = clamp(x, 0, srcW - w);
-  y = clamp(y, 0, srcH - h);
-  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-}
+import type { ShortPlan } from "./types";
+import { buildShots, fullCropRect, splitCropRect } from "./framing";
 
 function parseArgs(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {};
@@ -118,9 +100,13 @@ export function buildPreview(planPath: string, filmPath: string, srcPath: string
   const filmBody = extractFilmBody(filmHtml);
   const videoSrc = relativeVideoSrc(outPath, srcPath);
 
-  const cropFullBase = plan.geometry.full.crop;
-  const cropFullPunch = fullCropRect(plan, true);
-  const cropSplit: Rect | null = (plan.geometry.split as { crop?: Rect }).crop ?? null;
+  // The same shot list render.ts feeds ffmpeg: layout, framing and every cut-driven punch-in flip.
+  const shots = buildShots(plan).map((s) => ({
+    start: s.startSec,
+    end: s.endSec,
+    layout: s.layout,
+    crop: s.layout === "split" ? splitCropRect(plan, s.punchIn) : fullCropRect(plan, s.punchIn),
+  }));
 
   // Everything the client-side script needs that isn't already inside window.__PLAN
   // (which film.html embeds itself) — kept separate and minimal on purpose, so the
@@ -130,9 +116,7 @@ export function buildPreview(planPath: string, filmPath: string, srcPath: string
   const meta = {
     source: { width: plan.source.width, height: plan.source.height, durationSec: plan.source.durationSec },
     beats: plan.beats.map((b) => ({ id: b.id, start: b.start, end: b.end, layout: b.layout, punchIn: b.punchIn })),
-    cropFullBase,
-    cropFullPunch,
-    cropSplit,
+    shots,
   };
   const metaJson = JSON.stringify(meta).replace(/<\/script/gi, "<\\/script");
 
@@ -180,34 +164,22 @@ export function buildPreview(planPath: string, filmPath: string, srcPath: string
 ${filmBody}
 
 <script>
-/* ---- preview.ts runtime: crop math (mirrors render.ts Stage 7 exactly) + rAF loop ---- */
+/* ---- preview.ts runtime: crop math (render.ts Stage 7's shot list) + rAF loop ---- */
 (function () {
   "use strict";
   var META = ${metaJson};
 
-  function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
-
-  // Mirrors core.js's findActiveBeat(): active beat if t falls in [start,end), else
-  // clamp to first/last so a crop (and the overlay) is always defined.
-  function findActiveBeat(t) {
-    var beats = META.beats;
-    for (var i = 0; i < beats.length; i++) {
-      if (t >= beats[i].start && t < beats[i].end) return beats[i];
-    }
-    if (beats.length === 0) return null;
-    return t < beats[0].start ? beats[0] : beats[beats.length - 1];
-  }
-
-  // Mirrors render.ts's buildShots(): split never punches in; full punches in iff
-  // beat.punchIn. Only 3 distinct crops ever exist for the whole plan (full base,
-  // full punched, split), so we just pick between the 3 precomputed rects.
+  // META.shots is render.ts's own shot list (framing.ts buildShots): layout, crop rect, and the
+  // punch-in flip at every cut. Pick the shot covering t; clamp so a crop is always defined.
   function currentCropInfo(t) {
-    var b = findActiveBeat(t);
-    if (!b || b.layout !== "split") {
-      var punch = !!(b && b.punchIn);
-      return { layout: "full", crop: punch ? META.cropFullPunch : META.cropFullBase };
+    var shots = META.shots;
+    if (!shots.length) return { layout: "full", crop: null, key: -1 };
+    var idx = shots.length - 1;
+    if (t < shots[0].start) idx = 0;
+    else for (var i = 0; i < shots.length; i++) {
+      if (t >= shots[i].start && t < shots[i].end) { idx = i; break; }
     }
-    return { layout: "split", crop: META.cropSplit };
+    return { layout: shots[idx].layout, crop: shots[idx].crop, key: idx };
   }
 
   var video = document.getElementById("src-video");
@@ -216,7 +188,7 @@ ${filmBody}
   var viewport = document.getElementById("viewport");
   var perfEl = document.getElementById("perf");
 
-  var lastBeatId = null;
+  var lastShot = null;
 
   // ffmpeg: [0:v]crop=w:h:x:y,scale=OW:OH. scale=OW:OH with BOTH dims given always
   // stretches to exactly OW x OH (no implicit aspect preservation), so drawing the
@@ -293,11 +265,9 @@ ${filmBody}
     if (typeof window.renderFrame === "function") window.renderFrame(t);
 
     var info = currentCropInfo(t);
-    var b = findActiveBeat(t);
-    var beatId = b ? b.id + ":" + info.layout : null;
-    if (beatId !== lastBeatId) {
+    if (info.key !== lastShot) {
       applyCrop(info);
-      lastBeatId = beatId;
+      lastShot = info.key;
     }
 
     var dur = video.duration || META.source.durationSec || 0;

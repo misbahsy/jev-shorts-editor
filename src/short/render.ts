@@ -20,7 +20,12 @@ import { startSidecar, type SidecarHandle } from "../render/sidecar";
 import { seekExpr, READY_EXPR, DOUBLE_RAF_EXPR } from "../render/seekScript";
 import { ffmpeg } from "../render/ffutil";
 import { resolveSfxAssets, type SfxType } from "../render/sfx";
-import type { ShortPlan, Rect } from "./types";
+import type { ShortPlan } from "./types";
+import { loudnormPass2, HIGHPASS_HZ } from "./clean/ffmpegTools";
+import type { LoudnormMeasure } from "./clean/types";
+import { buildShots, fullCropRect, splitCropRect, type Shot } from "./framing";
+
+export { buildShots, fullCropRect };
 
 // Picked from the worker benchmark on this M4 (10 cores; see final report for the
 // table). Throughput peaks around 4 workers and gets WORSE at 8/10: all sidecar
@@ -133,61 +138,8 @@ export async function captureFrames(
 
 // ---------------- Stage 7: ffmpeg assembly ----------------
 
-const round30 = (t: number) => Math.round(t * 30) / 30;
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-
-interface Shot {
-  startSec: number;
-  endSec: number;
-  layout: "full" | "split";
-  punchIn: boolean;
-}
-
-export function buildShots(plan: ShortPlan): Shot[] {
-  const shots: Shot[] = [];
-  for (const beat of plan.beats) {
-    const punchIn = beat.layout === "full" && beat.punchIn; // split never punches in
-    const start = round30(beat.start);
-    const end = round30(beat.end);
-    const last = shots[shots.length - 1];
-    if (last && last.layout === beat.layout && last.punchIn === punchIn && Math.abs(last.endSec - start) < 1e-6) {
-      last.endSec = end;
-    } else {
-      shots.push({ startSec: start, endSec: end, layout: beat.layout, punchIn });
-    }
-  }
-  return shots;
-}
-
-/**
- * Source-pixel crop rect for `full` layout, punched in 1.10x around the face center when needed.
- *
- * `plan.perception.face` is the RAW median box, which perceive.ts still fills with a neutral
- * placeholder when it could not reliably detect a face. Punching in on that placeholder frames an
- * arbitrary off-center region of a video that may have no speaker at all. geometry.ts's no-face
- * branch signals exactly this case by emitting a ZERO-SIZE face rect, so use the geometry rect's
- * size as the "is this a real detection" test (it is already in plan.json, unlike the newer
- * perception.hasReliableFace flag) and punch in on the existing crop's own center instead.
- */
-export function fullCropRect(plan: ShortPlan, punchIn: boolean): Rect {
-  const base = plan.geometry.full.crop;
-  if (!punchIn) return base;
-  const srcW = plan.source.width;
-  const srcH = plan.source.height;
-  const detected = plan.geometry.full.face.w > 0 && plan.geometry.full.face.h > 0;
-  const faceCx = detected ? (plan.perception.face.x + plan.perception.face.w / 2) * srcW : base.x + base.w / 2;
-  const faceCy = detected ? (plan.perception.face.y + plan.perception.face.h / 2) * srcH : base.y + base.h / 2;
-  const w = base.w / 1.1;
-  const h = base.h / 1.1;
-  let x = faceCx - w / 2;
-  let y = faceCy - h / 2;
-  x = clamp(x, 0, srcW - w);
-  y = clamp(y, 0, srcH - h);
-  return { x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) };
-}
-
-function splitCropFilter(plan: ShortPlan): string {
-  const c = (plan.geometry.split as { crop?: Rect }).crop;
+function splitCropFilter(plan: ShortPlan, punchIn: boolean): string {
+  const c = splitCropRect(plan, punchIn);
   return c ? `crop=${c.w}:${c.h}:${c.x}:${c.y},` : "";
 }
 
@@ -196,7 +148,7 @@ function shotFilter(shot: Shot, plan: ShortPlan, idx: number): string {
   if (shot.layout === "split") {
     return (
       `[0:v]trim=start=${shot.startSec}:end=${shot.endSec},setpts=PTS-STARTPTS,` +
-      `${splitCropFilter(plan)}scale=1080:1080,pad=1080:1920:0:840:0x0b0b0f[${label}]`
+      `${splitCropFilter(plan, shot.punchIn)}scale=1080:1080,pad=1080:1920:0:840:0x0b0b0f[${label}]`
     );
   }
   const crop = fullCropRect(plan, shot.punchIn);
@@ -206,14 +158,22 @@ function shotFilter(shot: Shot, plan: ShortPlan, idx: number): string {
   );
 }
 
-function buildAudioFilter(
+/**
+ * Audio chain. Voice goes through a highpass, mixes with the sfx, and (when the plan carries a
+ * loudness measurement from the clean stage) takes the second loudnorm pass once on the final mix,
+ * then a ceiling limiter just under -1 dBFS as a safety net. Plans without a measurement, i.e.
+ * --no-clean, keep the original chain: mix, then limiter at 0.95.
+ */
+export function buildAudioFilter(
   plan: ShortPlan,
   sfxAssets: Record<SfxType, string>,
   sfxInputBase: number,
 ): { filter: string; sfxFiles: string[] } {
   const sfxFiles: string[] = [];
   const parts: string[] = [];
-  const mixLabels: string[] = ["0:a"];
+  const polish = plan.loudness !== undefined;
+  const voice = polish ? `[0:a]highpass=f=${HIGHPASS_HZ}[voice];` : "";
+  const mixLabels: string[] = [polish ? "voice" : "0:a"];
   plan.sfx.forEach((s, i) => {
     const inputIdx = sfxInputBase + i;
     sfxFiles.push(sfxAssets[s.type as SfxType]);
@@ -222,13 +182,17 @@ function buildAudioFilter(
     parts.push(`[${inputIdx}:a]adelay=${delayMs}:all=1,volume=${s.gainDb}dB[${label}]`);
     mixLabels.push(label);
   });
-  let filter = parts.length ? parts.join(";") + ";" : "";
+  const tail = polish
+    ? // 0.891 = -1.0 dBFS; level=0 keeps the limiter from re-normalizing what loudnorm just set
+      `${loudnormPass2(plan.loudness as LoudnormMeasure)},alimiter=limit=0.89:attack=5:release=50:level=0`
+    : "alimiter=limit=0.95:attack=5:release=50";
+  let filter = voice + (parts.length ? parts.join(";") + ";" : "");
   if (plan.sfx.length > 0) {
     filter +=
       `${mixLabels.map((l) => `[${l}]`).join("")}amix=inputs=${mixLabels.length}:duration=first:normalize=0[amixed];` +
-      `[amixed]alimiter=limit=0.95:attack=5:release=50[aout]`;
+      `[amixed]${tail}[aout]`;
   } else {
-    filter += `[0:a]alimiter=limit=0.95:attack=5:release=50[aout]`;
+    filter += `[${mixLabels[0]}]${tail}[aout]`;
   }
   return { filter, sfxFiles };
 }
@@ -262,7 +226,7 @@ export function runFfmpegAssemble(
     "-b:v", "12M",
     "-pix_fmt", "yuv420p",
     "-c:a", "aac",
-    "-b:a", "192k",
+    "-b:a", plan.loudness ? "256k" : "192k",
     "-movflags", "+faststart",
     "-t", String(plan.source.durationSec),
     outPath,

@@ -2,12 +2,15 @@
 
 Turn a talking-head video into a finished vertical short with one command.
 
-You give it a clip of someone talking to the camera. It gives back a 1080x1920 MP4 with the speaker framed for vertical, animated captions, on-screen graphics timed to what is being said, transitions, and sound effects. There is no timeline to drag around. The edit decisions are made by [Jev](https://typesafe.ai), a fast classifier from TypeSafe, and the on-screen text is written by a small LLM on Groq.
+You give it a clip of someone talking to the camera, retakes and dead air included. It cleans the clip up first, then gives back a 1080x1920 MP4 with the speaker framed for vertical, animated captions, on-screen graphics timed to what is being said, transitions, and sound effects. There is no timeline to drag around. The edit decisions are made by [Jev](https://typesafe.ai), a fast classifier from TypeSafe, and the on-screen text is written by a small LLM on Groq.
 
 On an Apple Silicon Mac, a 40 second clip takes about 9 seconds to plan and about 2 minutes to fully render.
 
 ## What you get
 
+- **A clean take.** Retakes, dead air and filler sounds are cut out before anything else happens. When you say a line twice, only the last take stays. Long pauses shrink to a short breath, and the silence before the first word and after the last one is trimmed. Every cut is written to `clean.json` in the work folder.
+- **Cuts that do not jump.** The framing alternates between normal and a slight punch-in at each cut, so a jump cut reads as a camera change. Audio is faded at every join.
+- **Consistent loudness.** The final mix is high-passed and normalized to about -14 LUFS with a true peak of -1 dBTP.
 - **Vertical reframing.** Faces are found with Apple Vision, so the speaker stays in frame when a wide shot becomes 9:16.
 - **Animated captions** in one of five styles.
 - **Graphic cards** picked per phrase from 18 templates, such as stat callouts, checklists, quotes, versus panels and code terminals.
@@ -75,6 +78,7 @@ npm run short -- --in input.mp4 --out short.mp4
 | `--workers N` | Number of parallel frame renderers. Default is 6. |
 | `--preview [file]` | Also write `preview.html`, which plays the edit live over the source video. |
 | `--no-export` | Stop after planning and the preview. Skip frame capture and encoding. |
+| `--no-clean` | Skip the clean step and use the video as it is: no cuts, no loudness normalization. |
 | `--plan <plan.json>` | Reuse a saved plan instead of planning again. |
 | `--film <film.html>` | Reuse a built film page instead of building it again. |
 | `--progress-json` | Print one JSON event per line on stdout and send human logs to stderr. Useful if you are driving this from another app. |
@@ -111,8 +115,12 @@ A few things to know:
 ```
 input.mp4
   │
-  ├─ plan ───── transcribe (parakeet, local)
-  │             perceive   (Apple Vision faces + one vision-LLM look at the scene)
+  ├─ clean ──── transcribe the raw clip once (parakeet, local)
+  │             find retakes, dead air and filler sounds; Jev confirms each retake
+  │             cut them out with one ffmpeg pass
+  │           → clean.mp4, clean.json (every cut and why)
+  │
+  ├─ plan ───── perceive   (Apple Vision faces + one vision-LLM look at the scene)
   │             decide     (Jev picks style, captions, a template per phrase, transitions)
   │             structure  (merge and space the beats)
   │             hold       (decide how long each graphic stays up)
@@ -128,7 +136,7 @@ input.mp4
               → short.mp4
 ```
 
-Each step writes its output into the work folder (`decisions.json`, `beats.json`, `structure.json`, `copy.json`, `plan.json`, `film.html`). If something looks wrong, open those files to see which stage made the call.
+Everything after the clean step works on `clean.mp4`, with the words moved onto its timeline. Each step writes its output into the work folder (`clean.json`, `decisions.json`, `beats.json`, `structure.json`, `copy.json`, `plan.json`, `film.html`). If something looks wrong, open those files to see which stage made the call.
 
 `src/short/CONTRACT.md` is the design contract the pipeline was built against. Read it if you want to change how decisions are made.
 
@@ -159,7 +167,11 @@ Measured on an M-series MacBook with a 40 second 1600x852 clip:
 
 The preview is ready as soon as planning ends, so you can watch the edit at the 10 second mark and decide whether the export is worth waiting for. More workers help on machines with more performance cores.
 
+The clean stage adds time up front, mostly the one transcription plus the ffmpeg cut. On a 4.5 minute raw take it ran about 37 seconds and produced a 48 second short, with about 145 seconds wall clock end to end including export. Use `--no-clean` to skip it for footage that is already tight.
+
 ## Troubleshooting
+
+**It cut something I wanted.** Open `clean.json` in the work folder. Each cut lists its time range, the reason (`retake`, `silence`, `filler`, `lead` or `tail`) and the words that were removed. Retakes also carry the Jev score that approved them. If the cuts are wrong for your clip, run again with `--no-clean` to use the video untouched.
 
 **`TYPESAFE_API_KEY is not set` or `GROQ_API_KEY is not set`.** Copy `.env.example` to `.env` in the repo root and fill in both keys, or export them in your shell.
 
