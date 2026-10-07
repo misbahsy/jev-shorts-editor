@@ -8,7 +8,27 @@ import { resolve } from "node:path";
 
 /** Repo root is one level up from src/. */
 export const REPO_ROOT = resolve(import.meta.dirname, "..");
-const ENV_PATH = resolve(REPO_ROOT, ".env");
+
+/**
+ * In a linked git worktree the checkout has no .env of its own, so fall back to the
+ * main checkout's. A worktree's .git is a file reading "gitdir: <main>/.git/worktrees/<name>".
+ */
+function findEnvPath(): string {
+  const own = resolve(REPO_ROOT, ".env");
+  if (existsSync(own)) return own;
+  const gitFile = resolve(REPO_ROOT, ".git");
+  try {
+    const m = /^gitdir:\s*(.+?)[\\/]\.git[\\/]worktrees[\\/]/m.exec(readFileSync(gitFile, "utf8"));
+    if (m) {
+      const main = resolve(m[1], ".env");
+      if (existsSync(main)) return main;
+    }
+  } catch {
+    // .git is a directory (normal checkout) or missing: keep the default.
+  }
+  return own;
+}
+const ENV_PATH = findEnvPath();
 
 function parseEnvFile(text: string): Record<string, string> {
   const out: Record<string, string> = {};
