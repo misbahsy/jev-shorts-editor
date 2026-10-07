@@ -136,7 +136,7 @@
     var l = rt.leak;
     if (l) {
       var env = leakEnvelope(t, l.times);
-      l.root.style.opacity = String(env);
+      l.root.style.opacity = String(env * 0.8);
       if (env > 0) l.mount.render(t);
     }
     return pending;

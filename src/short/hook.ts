@@ -72,9 +72,10 @@ export const DEFAULT_HOOK_STYLE: HookStyleId = "giant_word";
 
 /** The caption styles that are drawn by the engine, and the knobs we override per style. */
 export const CAPTION24: Partial<Record<CaptionStyleId, { presetId: string; overrides: Record<string, unknown> }>> = {
-  anton_karaoke: { presetId: "pop-anton-yellow-karaoke", overrides: {} },
-  archivo_chip: { presetId: "pop-archivo-red-chip", overrides: {} },
-  inter_editorial: { presetId: "ed-inter-instrument", overrides: {} },
+  // smaller and two words per page: the authored 3 words at 0.085 wrapped to two lines and ran into the cards
+  anton_karaoke: { presetId: "pop-anton-yellow-karaoke", overrides: { size: 0.07, wordsPerLine: 2 } },
+  archivo_chip: { presetId: "pop-archivo-red-chip", overrides: { size: 0.062, wordsPerLine: 2 } },
+  inter_editorial: { presetId: "ed-inter-instrument", overrides: { size: 0.06, wordsPerLine: 2 } },
 };
 
 export const LEAK_PRESET_ID = "warm-light-leak-drift-recurring-e5x";
