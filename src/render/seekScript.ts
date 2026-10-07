@@ -2,7 +2,12 @@
 // See render/README.md for the authoring contract this implements.
 export function seekExpr(t: number): string {
   return `(function(t){
-    if (typeof window.renderFrame === 'function') { window.renderFrame(t); return 'renderFrame'; }
+    if (typeof window.renderFrame === 'function') {
+      // a page may return a thenable (e.g. while it decodes an image for this frame): wait for it
+      var r = window.renderFrame(t);
+      if (r && typeof r.then === 'function') return r.then(function(){ return 'renderFrame'; });
+      return 'renderFrame';
+    }
     if (typeof window.__seek === 'function') { window.__seek(t); return '__seek'; }
     var anims = (document.getAnimations ? document.getAnimations() : []);
     anims.forEach(function(a){ try { a.pause(); a.currentTime = t * 1000; } catch (e) {} });
