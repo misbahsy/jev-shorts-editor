@@ -210,7 +210,9 @@ export function runFfmpegAssemble(
   const shotFilters = shots.map((s, i) => shotFilter(s, plan, i));
   const concatInputs = shots.map((_, i) => `[s${i}]`).join("");
   const concatFilter = `${concatInputs}concat=n=${shots.length}:v=1:a=0[vconcat]`;
-  const overlayFilter = `[vconcat][1:v]overlay=format=auto[vout]`;
+  // The sidecar captures at the display's backing scale (2160x3840 on a retina Mac); bring the overlay
+  // back to the output size or overlay would show only its top-left quadrant.
+  const overlayFilter = `[1:v]scale=${OUT_W}:${OUT_H}:flags=bicubic[ov];[vconcat][ov]overlay=format=auto[vout]`;
   const { filter: audioFilter, sfxFiles } = buildAudioFilter(plan, sfxAssets, 2);
   const filterComplex = [...shotFilters, concatFilter, overlayFilter, audioFilter].join(";");
   const framesPattern = path.join(framesDir, "%05d.png");
