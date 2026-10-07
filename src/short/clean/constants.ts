@@ -1,9 +1,24 @@
 import type { CleanOptions } from "./types";
 
+/**
+ * Silence kept around a cut, measured from where the audio envelope says the sound really
+ * starts or stops (see edges.ts), not from transcript timestamps. Joins that fall between
+ * sentences or clauses keep a little more air than joins inside a phrase (a stutter or a
+ * dropped word), which are tightened so the phrase stays in one breath.
+ */
+export const PAD_BEFORE_SEC = 0.05;
+export const PAD_AFTER_SEC = 0.08;
+export const PHRASE_PAD_BEFORE_SEC = 0.04;
+export const PHRASE_PAD_AFTER_SEC = 0.05;
+/** Rounding a cut edge to the nearest frame may not bring it closer than this to the sound. */
+export const EDGE_MARGIN_SEC = 0.03;
+
 export const DEFAULT_CLEAN: CleanOptions = {
   maxGap: 0.35,
-  padAfter: 0.12,
-  padBefore: 0.1,
+  padAfter: PAD_AFTER_SEC,
+  padBefore: PAD_BEFORE_SEC,
+  phrasePadAfter: PHRASE_PAD_AFTER_SEC,
+  phrasePadBefore: PHRASE_PAD_BEFORE_SEC,
   fillerMin: 0.15,
   fillerMax: 1.2,
 };

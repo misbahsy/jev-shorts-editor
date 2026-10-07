@@ -30,12 +30,15 @@ export interface Range {
 export type Interval = Range;
 
 export interface CleanOptions {
-  /** Longest pause between kept words that is left alone. */
+  /** Longest true silence (measured on the audio, not the word times) between kept words that is left alone. */
   maxGap: number;
   /** Silence kept after a word before a cut. */
   padAfter: number;
   /** Silence kept before a word after a cut. */
   padBefore: number;
+  /** Same two pads for a join inside a phrase (the earlier word has no punctuation). */
+  phrasePadAfter: number;
+  phrasePadBefore: number;
   /** Non-word sound shorter than this is not a filler. */
   fillerMin: number;
   /** Non-word sound longer than this is left alone (could be real speech). */
