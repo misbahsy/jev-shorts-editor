@@ -18,7 +18,7 @@ const FAMILIES = [
   "paper_editorial", "clean_swiss", "gradient_pop", "dark_luxe",
 ];
 const ACCENTS = ["blue", "green", "yellow", "orange", "red", "pink", "purple", "cyan"];
-const CAPTION_STYLES = ["word_pop", "single_word", "karaoke_line", "boxed_highlight", "typewriter_line"];
+const CAPTION_STYLES = ["word_pop", "single_word", "karaoke_line", "boxed_highlight", "typewriter_line", "anton_karaoke", "archivo_chip", "inter_editorial"];
 const TEXT_EFFECTS = ["typewriter", "word_pop", "slide_up", "blur_in", "scramble_decode", "highlighter_swipe", "scale_punch", "mask_reveal"];
 const TRANSITIONS = ["hard_cut", "flash", "whip_streak", "glass_wipe", "zoom_blur", "glitch_slice"];
 // panel (split, non-underChin) templates — owned by another agent; expected to be silently
