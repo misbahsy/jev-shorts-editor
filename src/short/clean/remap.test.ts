@@ -57,3 +57,18 @@ test("cut points are output-time joins, small removals are skipped, close joins 
   );
   assert.deepEqual(pts.map(p => Number(p.toFixed(2))), [5.9, 7.9]);
 });
+
+test("a word whose timestamp pokes slightly past a cut edge stays, clamped to its keep", () => {
+  const keeps = [{ start: 1, end: 3 }, { start: 5, end: 8 }];
+  const words = [
+    { i: 0, text: "a", start: 0.9, end: 1.3 }, // starts before the keep, center inside
+    { i: 1, text: "b", start: 2.8, end: 3.1 }, // ends after the keep, center inside
+    { i: 2, text: "c", start: 3.4, end: 4.0 }, // in the cut
+    { i: 3, text: "d", start: 4.9, end: 5.1 }, // center exactly on the edge keeps, sits at the join
+  ];
+  const out = remapWords(words, keeps);
+  assert.deepEqual(out.map(w => w.text), ["a", "b", "d"]);
+  assert.ok(Math.abs(out[0].start - 0) < 1e-9);
+  assert.ok(Math.abs(out[1].end - 2) < 1e-9);
+  assert.ok(out.every(w => w.end >= w.start));
+});

@@ -18,6 +18,10 @@ export interface Cut {
   text: string;
   /** Jev's probability that the span is an abandoned take, for retake cuts. */
   jev?: number;
+  /** What decided the cut: "jev" and "llm" for retakes (both when they agree), "rule" for the rest. */
+  source?: "jev" | "llm" | "jev+llm" | "rule";
+  /** The take selector's reason, for retake cuts it proposed. */
+  why?: string;
 }
 
 /** A span of the raw source that is kept, in source time. */
@@ -30,12 +34,15 @@ export interface Range {
 export type Interval = Range;
 
 export interface CleanOptions {
-  /** Longest pause between kept words that is left alone. */
+  /** Longest true silence (measured on the audio, not the word times) between kept words that is left alone. */
   maxGap: number;
   /** Silence kept after a word before a cut. */
   padAfter: number;
   /** Silence kept before a word after a cut. */
   padBefore: number;
+  /** Same two pads for a join inside a phrase (the earlier word has no punctuation). */
+  phrasePadAfter: number;
+  phrasePadBefore: number;
   /** Non-word sound shorter than this is not a filler. */
   fillerMin: number;
   /** Non-word sound longer than this is left alone (could be real speech). */
@@ -69,4 +76,8 @@ export interface CleanStats {
   retakeMode: "jev" | "fallback" | "none";
   jevCalls: number;
   jevLatencyMs: number[];
+  /** Take selection by an LLM: "llm" ran, "fallback" failed and was skipped, "off" was not asked. */
+  takeSelection?: "llm" | "fallback" | "off";
+  /** Retake cuts the LLM proposed that the n-gram pass and Jev had not found. */
+  llmDrops?: number;
 }

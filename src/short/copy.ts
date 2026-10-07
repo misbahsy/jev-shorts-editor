@@ -231,12 +231,12 @@ export function fallbackBigStatement(beat: RawBeat, emphasisChoice: string | nul
   return { text: fallbackPhrase(beat, emphasisChoice, words) };
 }
 
-async function callGroq(prompt: string, apiKey: string, model: string, maxTokens: number, reasoningEffort?: string): Promise<string> {
+export async function callGroq(prompt: string, apiKey: string, model: string, maxTokens: number, reasoningEffort?: string, temperature = 0.4): Promise<string> {
   const body: Record<string, unknown> = {
     model,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
-    temperature: 0.4,
+    temperature,
     max_tokens: maxTokens,
   };
   if (reasoningEffort) body.reasoning_effort = reasoningEffort;

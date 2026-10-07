@@ -87,22 +87,41 @@ with precise word ends, and never looked at again after this stage.
    confirms each one (`confirm.ts`, one noul question per candidate, cut at `JEV_CUT_THRESHOLD` 0.5). The
    LAST take is kept; for a 2 to 4 word stutter the second occurrence is kept. If Jev is unavailable the
    deterministic candidates with at least `FALLBACK_MIN_MATCH` matching words are cut instead, with a warning.
+   `takes.ts` then adds a take-selection pass: Groq (`GROQ_TEXT_MODEL`, temperature 0, JSON) reads the whole raw
+   transcript packed one line per phrase (a pause of `TAKES_PHRASE_GAP_SEC` 0.5 s starts a new line, each word
+   carries its index, prompt in `takesPrompt.ts`) and proposes word ranges to drop. The model can only name word
+   indices; `guardProposals` refuses a range that is not whole words, any drop longer than a slip whose content
+   is not said again later (so the last take of a line is never dropped), a short drop inside a phrase with no
+   repeat after it, and anything that would take the model's own total past `TAKES_MAX_DROP_FRACTION` (25%) of
+   the speech. Jev's retakes are kept as they are, the model adds what the n-gram pass missed. If the Groq call
+   fails or the answer is not JSON, nothing is added and a warning is logged.
 2. `recover.ts` guards against speech the transcript lacks. Voiced spans (silencedetect, relative to clip
    loudness) of at least 0.6 s with no words are re-transcribed together in one batched parakeet call (spans padded
    0.3 s, 1 s of silence between them) and the words are merged back with their offsets. A span that is still
    empty and at least 1.2 s long is protected: no cut may touch it, and `clean.json` lists it under `kept` with
    reason `untranscribed_kept`. Shorter empty spans stay eligible for the filler rule.
-3. `keep.ts` turns removed words, gaps and voiced non-word sounds into KEEP ranges. Gaps over 0.35 s shrink to
-   0.12 s after the previous word and 0.10 s before the next, the lead and tail trim to the same padding.
-   Edges snap to quiet audio and to frames, so no cut lands inside a word.
+3. `edges.ts` finds the real sound edges of every word on the 10 ms loudness envelope, ignoring the
+   transcript timestamps (parakeet starts early and ends late). Each word has a core, its loudest frame in its own
+   cell; the onset and offset walk out from the core to where the level falls `ONSET_REL_DB` / `OFFSET_REL_DB`
+   below it (clamped to a floor and ceiling) and stays there for 70 ms, never past a neighbour's core, with a
+   valley fallback when speech runs on. `keep.ts` turns removed words, gaps and voiced non-word sounds into KEEP
+   ranges from those edges: a cut edge sits `PAD_BEFORE_SEC` (50 ms) before an onset and `PAD_AFTER_SEC` (80 ms)
+   after an offset, or `PHRASE_PAD_BEFORE_SEC` / `PHRASE_PAD_AFTER_SEC` (40 / 50 ms) inside a phrase (the
+   earlier word has no punctuation). The deliberate breath at a join is gone. A true silence over `maxGap`
+   (0.35 s, measured on the audio) still shrinks to the pads. Edges round to the nearest frame but never come
+   within `EDGE_MARGIN_SEC` (30 ms) of the sound, so no cut lands inside a word. `snapWordsToEdges` puts the same
+   edges on the word list, and `remapWords` keeps a word when its center lies in a keep range.
 4. `cut.ts` makes `work/clean.mp4` in one ffmpeg call: trim and atrim per KEEP range, 30 ms audio fades at
    each join, concat, frame-accurate, h264_videotoolbox at a high bitrate and AAC 256k.
 5. `remap.ts` moves the surviving words onto the clean clock; `cutPoints` gives `plan.cuts`.
 6. `ffmpegTools.ts` measures loudnorm pass 1 on clean.mp4 (after a highpass at 80 Hz). The final render applies
    pass 2 once, on the final mix, with `linear=true` and a -1 dBFS ceiling limiter.
 
-`work/clean.json` lists every cut as `{start, end, reason, text, jev?}` with `reason` one of `retake`,
-`silence`, `filler`, `lead`, `tail` (times are on the RAW clock), plus the KEEP ranges, every retake
+`work/clean.json` lists every cut as `{start, end, reason, text, source, why?, jev?}` with `reason` one of
+`retake`, `silence`, `filler`, `lead`, `tail` (times are on the RAW clock) and `source` one of `jev`, `llm`,
+`jev+llm` (retakes) or `rule` (everything else); `why` is the model's reason for an LLM retake. A
+`takeSelection` block lists every proposal the model made, with its word range, text, reason, whether it was
+accepted and, if not, why the guard refused it. Also in the file: the KEEP ranges, every retake
 candidate with its score, the `kept` spans (voiced audio without words that was left alone), and the stats. `npm test` covers the pure parts with synthetic word lists.
 
 ## Option menus (ids are the contract; descriptions for Jev live in `menus.ts`)

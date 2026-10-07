@@ -3,48 +3,22 @@
  * cuts, all in source time. Pure: no ffmpeg, no files.
  *
  * Every gap between two kept words is handled the same way: if removed words or a non-word
- * sound sit in it, or it is longer than maxGap, it shrinks to padAfter after the earlier word
- * and padBefore before the later one. The lead-in and tail shrink to the same padding. Cut
- * edges are snapped inward to frame boundaries, so a cut can never clip a word.
+ * sound sit in it, or the true silence between the two words is longer than maxGap, it shrinks
+ * to padAfter after the earlier word's sound and padBefore before the later one's. Where a
+ * sound starts and stops comes from the audio envelope (edges.ts), not from word timestamps,
+ * which are early at the start and late at the end. The lead-in and tail shrink to the same
+ * padding. Cut edges are rounded to the nearest frame but never closer than EDGE_MARGIN_SEC
+ * to the sound, so a cut cannot clip a word.
  */
 import type { Word } from "../transcribe";
+import { EDGE_MARGIN_SEC } from "./constants";
+import { wordEdges, type Edge } from "./edges";
 import type { Cut, CleanOptions, CutReason, Interval, Range } from "./types";
 
 /** Cuts shorter than this are not worth a join. */
 const MIN_CUT_SEC = 0.05;
 /** A non-word sound must sit this far from the words around it, or it is a word's own tail. */
 const FILLER_CLEARANCE_SEC = 0.05;
-
-/** Loudness (dBFS, 10 ms RMS) above which a cut edge would land inside a voiced sound. */
-export const QUIET_DB = -45;
-/** How far a cut edge may move toward the speech to find a quiet spot. */
-export const MAX_EDGE_SHIFT_SEC = 0.15;
-const ENV_STEP_SEC = 0.01;
-const EDGE_WINDOW_SEC = 0.03;
-
-function levelMax(env: number[], a: number, b: number): number {
-  const i0 = Math.max(0, Math.floor(a / ENV_STEP_SEC + 1e-6));
-  const i1 = Math.min(env.length, Math.max(i0 + 1, Math.ceil(b / ENV_STEP_SEC - 1e-6)));
-  let m = -90;
-  for (let i = i0; i < i1; i++) if (env[i] > m) m = env[i];
-  return m;
-}
-
-/**
- * Moves one edge of a cut toward the kept speech until the 30 ms of kept audio at the edge
- * is quiet, so the join never lands inside a voiced sound. dir +1: a cut START (moves later,
- * the kept audio is the 30 ms before it). dir -1: a cut END (moves earlier, the kept audio is
- * the 30 ms after it). Returns null when nothing quiet is within reach.
- */
-export function snapEdgeToQuiet(env: number[], t: number, dir: 1 | -1): number | null {
-  for (let d = 0; d <= MAX_EDGE_SHIFT_SEC + 1e-9; d += ENV_STEP_SEC) {
-    const e = t + dir * d;
-    const lvl = dir === 1 ? levelMax(env, e - EDGE_WINDOW_SEC, e) : levelMax(env, e, e + EDGE_WINDOW_SEC);
-    // the kept audio next to the join must be quiet: the 30 ms before a start edge, the 30 ms after an end edge
-    if (lvl < QUIET_DB) return e;
-  }
-  return null;
-}
 
 export interface PlanInput {
   words: Word[];
@@ -55,7 +29,7 @@ export interface PlanInput {
   durationSec: number;
   fps: number;
   opts: CleanOptions;
-  /** 10 ms RMS levels of the source audio. When given, cut edges avoid voiced sounds. */
+  /** 10 ms RMS levels of the source audio. When given, cut edges follow the real sound, not word times. */
   envelope?: number[];
   /** Voiced spans without words that must stay in the output (with the breath around them). */
   protect?: Range[];
@@ -144,42 +118,57 @@ export function planKeep(input: PlanInput): KeepPlan {
   gaps.push({ gs: kept[kept.length - 1].end, ge: durationSec, lead: false, tail: true, from: kept[kept.length - 1].i, to: words.length });
 
   const frame = 1 / fps;
+  // sound edges from the audio, or the word timestamps when there is no envelope
+  const edges = envelope ? wordEdges(envelope, words, durationSec) : null;
+  const offsetOf = (i: number): Edge => (edges ? edges[i].offset : { t: words[i].end, quiet: true });
+  const onsetOf = (i: number): Edge => (edges ? edges[i].onset : { t: words[i].start, quiet: true });
   const snapped: Cut[] = [];
   for (const g of gaps) {
     type Item = { start: number; end: number; reason: CutReason; text: string };
     const items: Item[] = [];
     for (let i = g.from + 1; i < g.to; i++) {
       const r = removed.get(i);
-      if (r) items.push({ start: words[i].start, end: words[i].end, reason: r, text: words[i].text });
+      if (r) items.push({ start: onsetOf(i).t, end: Math.max(onsetOf(i).t, offsetOf(i).t), reason: r, text: words[i].text });
     }
     for (const f of fillerSounds) {
       if (f.start >= g.gs && f.end <= g.ge) items.push({ start: f.start, end: f.end, reason: "filler", text: "" });
     }
-    const length = g.ge - g.gs;
+    // where the sound before and after the gap really stops and starts
+    const A = g.lead ? null : words[g.from];
+    const B = g.tail ? null : words[g.to];
+    const aOff = A ? offsetOf(A.i) : { t: 0, quiet: false };
+    const bOn = B ? onsetOf(B.i) : { t: durationSec, quiet: false };
+    // the air the neighbouring words (kept or not) leave around the two kept ones
+    const afterA = A ? Math.max(aOff.t, A.i + 1 < words.length ? onsetOf(A.i + 1).t : durationSec) : 0;
+    const beforeB = B ? Math.min(bOn.t, B.i > 0 ? offsetOf(B.i - 1).t : 0) : durationSec;
     let base: CutReason | null = null;
     if (g.lead) base = "lead";
     else if (g.tail) base = "tail";
-    else if (length > opts.maxGap) base = "silence";
+    else if (bOn.t - aOff.t > opts.maxGap) base = "silence";
     if (items.length === 0 && !base) continue;
     const gapReason: CutReason = base ?? "silence";
-    let start = g.lead ? 0 : g.gs + opts.padAfter;
-    let end = g.tail ? durationSec : g.ge - opts.padBefore;
-    if (envelope) {
-      const s2 = g.lead ? start : snapEdgeToQuiet(envelope, start, 1);
-      const e2 = g.tail ? end : snapEdgeToQuiet(envelope, end, -1);
-      if (s2 === null || e2 === null) {
-        // no quiet spot at an edge. A pause the word timings claim but the audio does not have
-        // is left alone. Removed words still go, edges unmoved.
-        if (items.length === 0) continue;
-      } else {
-        start = Math.min(end, s2);
-        end = Math.max(start, e2);
-      }
-    }
+    // a join inside a phrase (no punctuation after the earlier word) can be tighter
+    const tight = A !== null && B !== null && !/[.!?,;:]["')\]]*$/.test(A.text);
+    const padA = tight ? opts.phrasePadAfter : opts.padAfter;
+    const padB = tight ? opts.phrasePadBefore : opts.padBefore;
+    let start = 0;
+    let end = durationSec;
+    if (A) start = aOff.quiet ? aOff.t + Math.min(padA, Math.max(0, afterA - aOff.t) / 2) : aOff.t;
+    if (B) end = bOn.quiet ? bOn.t - Math.min(padB, Math.max(0, bOn.t - beforeB) / 2) : bOn.t;
     if (end - start < MIN_CUT_SEC) continue;
-    // snap the whole gap inward to frames: the kept side only ever grows
-    const S = start === 0 ? 0 : Math.ceil(start * fps - 1e-6) * frame;
-    const E = end >= durationSec - 1e-9 ? durationSec : Math.floor(end * fps + 1e-6) * frame;
+    // snap the whole gap to frames: nearest frame, but never closer than EDGE_MARGIN_SEC to a sound
+    let S = 0;
+    if (A) {
+      const nearest = Math.round(start * fps) * frame;
+      const minStart = aOff.quiet ? Math.min(start, aOff.t + EDGE_MARGIN_SEC) : start;
+      S = nearest >= minStart - 1e-9 ? nearest : Math.ceil(start * fps - 1e-6) * frame;
+    }
+    let E = durationSec;
+    if (B) {
+      const nearest = Math.round(end * fps) * frame;
+      const maxEnd = bOn.quiet ? Math.max(end, bOn.t - EDGE_MARGIN_SEC) : end;
+      E = nearest <= maxEnd + 1e-9 ? nearest : Math.floor(end * fps + 1e-6) * frame;
+    }
     if (E - S < frame * 1.5) continue;
     // label the gap: removed words and sounds keep their own reason, the air around them is silence
     items.sort((x, y) => x.start - y.start);

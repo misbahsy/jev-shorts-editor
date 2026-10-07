@@ -1,9 +1,24 @@
 import type { CleanOptions } from "./types";
 
+/**
+ * Silence kept around a cut, measured from where the audio envelope says the sound really
+ * starts or stops (see edges.ts), not from transcript timestamps. Joins that fall between
+ * sentences or clauses keep a little more air than joins inside a phrase (a stutter or a
+ * dropped word), which are tightened so the phrase stays in one breath.
+ */
+export const PAD_BEFORE_SEC = 0.05;
+export const PAD_AFTER_SEC = 0.08;
+export const PHRASE_PAD_BEFORE_SEC = 0.04;
+export const PHRASE_PAD_AFTER_SEC = 0.05;
+/** Rounding a cut edge to the nearest frame may not bring it closer than this to the sound. */
+export const EDGE_MARGIN_SEC = 0.03;
+
 export const DEFAULT_CLEAN: CleanOptions = {
   maxGap: 0.35,
-  padAfter: 0.12,
-  padBefore: 0.1,
+  padAfter: PAD_AFTER_SEC,
+  padBefore: PAD_BEFORE_SEC,
+  phrasePadAfter: PHRASE_PAD_AFTER_SEC,
+  phrasePadBefore: PHRASE_PAD_BEFORE_SEC,
   fillerMin: 0.15,
   fillerMax: 1.2,
 };
@@ -40,3 +55,13 @@ export const TAKE_BOUNDARY_GAP_SEC = 0.2;
 /** Word-edge refinement threshold: dead-air threshold plus this offset, never above the cap. */
 export const REFINE_OFFSET_DB = 10;
 export const REFINE_MAX_DB = -48;
+
+/** Take selection (takes.ts): phrases are split where the speaker pauses at least this long. */
+export const TAKES_PHRASE_GAP_SEC = 0.5;
+/** The LLM may add drops worth at most this share of the spoken time (Jev's own cuts do not count). */
+export const TAKES_MAX_DROP_FRACTION = 0.25;
+/** A drop of this many words or fewer (a slip, a false start) needs no later twin if it stands alone. */
+export const TAKES_SLIP_MAX_WORDS = 2;
+export const TAKES_SLIP_WITH_TWIN_MAX_WORDS = 3;
+/** A longer drop needs this share of its content words said again later, within the retake window. */
+export const TAKES_TWIN_OVERLAP = 0.5;

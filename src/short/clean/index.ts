@@ -11,10 +11,12 @@ import { DEFAULT_CLEAN, FILLER_TOKENS } from "./constants";
 import { adaptiveSilenceDb, detectSilence, loudnessEnvelope, measureLoudnorm } from "./ffmpegTools";
 import { confirmRetakes, type Confirmed, type JevCall } from "./confirm";
 import { cutVideo } from "./cut";
+import { snapWordsToEdges, wordEdges } from "./edges";
 import { findFillerSounds, planKeep } from "./keep";
 import { refineWords } from "./refine";
 import { REFINE_MAX_DB, REFINE_OFFSET_DB } from "./constants";
 import { cutPoints, keptDuration, remapWords } from "./remap";
+import { selectTakes, type TakesCall } from "./takes";
 import { recoverUntranscribed, spansToProtect, type Retranscribe } from "./recover";
 import { findRetakeCandidates, mergeSpans, normWord, type RetakeCandidate } from "./retakes";
 import type { CleanOptions, CleanStats, Cut, CutReason, KeptSpan, LoudnormMeasure, Range } from "./types";
@@ -45,6 +47,10 @@ export interface CleanOptionsIn {
   options?: Partial<CleanOptions>;
   /** Replaces the Jev call (tests). */
   jev?: JevCall;
+  /** Replaces the Groq call that picks takes (tests). */
+  takes?: TakesCall;
+  /** Set false to skip the LLM take selection. */
+  selectTakes?: boolean;
   /** Replaces the parakeet call that re-transcribes untranscribed voiced spans (tests). */
   retranscribe?: Retranscribe;
   /** Set false to skip the second look at voiced spans that have no words. */
@@ -140,6 +146,17 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
   const removed = new Map<number, "retake" | "filler">();
   for (const s of mergeSpans(conf.accepted.map(a => a.cand))) for (let i = s.start; i < s.end; i++) removed.set(i, "retake");
 
+  // take selection: an LLM adds drops the n-gram pass missed; code guards every proposal
+  const jevRemoved = new Set(removed.keys());
+  const sel = await selectTakes({
+    words,
+    alreadyRemoved: jevRemoved,
+    call: input.selectTakes === false ? undefined : input.takes,
+    log,
+    ...(input.selectTakes === false ? { off: true } : {}),
+  });
+  for (const i of sel.drops.keys()) removed.set(i, "retake");
+
   // explicit filler tokens, but only when there is air on at least one side of the word
   for (const w of words) {
     if (removed.has(w.i) || !FILLER_TOKENS.has(normWord(w.text))) continue;
@@ -160,6 +177,17 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
   if (!input.dryRun) {
     cutVideo({ src: srcPath, out: cleanPath, keeps: plan.keeps, fps: pr.fps, sampleRate: pr.sampleRate, scriptPath: join(workDir, "clean.filter.txt") });
     loudness = measureLoudnorm(cleanPath);
+  }
+
+  // every cut says what decided it; retake cuts also carry the LLM's reason
+  const wordsIn = (c: Cut) => words.filter(w => w.start < c.end && w.end > c.start && removed.has(w.i)).map(w => w.i);
+  for (const c of plan.cuts) {
+    if (c.reason !== "retake") { c.source = "rule"; continue; }
+    const idx = wordsIn(c);
+    const byJev = idx.some(i => jevRemoved.has(i));
+    const llm = idx.filter(i => sel.drops.has(i));
+    c.source = byJev && llm.length ? "jev+llm" : llm.length ? "llm" : "jev";
+    if (llm.length) c.why = [...new Set(llm.map(i => sel.drops.get(i) as string))].join("; ");
   }
 
   // each retake cut carries the highest Jev score among the candidates inside it
@@ -185,9 +213,12 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
     retakeMode: conf.mode,
     jevCalls: conf.calls,
     jevLatencyMs: conf.latencyMs,
+    takeSelection: sel.mode,
+    llmDrops: plan.cuts.filter(c => c.source === "llm").length,
   };
 
-  const outWords = remapWords(words, plan.keeps);
+  // captions use the real sound edges, so every kept word sits inside a keep range
+  const outWords = remapWords(snapWordsToEdges(words, wordEdges(env, words, pr.durationSec)), plan.keeps);
   const points = cutPoints(plan.keeps);
 
   const considered = (conf.scored.length ? conf.scored.map(s => s.cand) : cands).map((c: RetakeCandidate) => {
@@ -204,8 +235,9 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
         silenceThresholdDb: thr.thresholdDb,
         retakeMode: conf.mode,
         stats,
-        cuts: plan.cuts.map(c => ({ start: +c.start.toFixed(3), end: +c.end.toFixed(3), reason: c.reason, text: c.text, ...(c.jev !== undefined ? { jev: c.jev } : {}) })),
+        cuts: plan.cuts.map(c => ({ start: +c.start.toFixed(3), end: +c.end.toFixed(3), reason: c.reason, text: c.text, source: c.source, ...(c.why ? { why: c.why } : {}), ...(c.jev !== undefined ? { jev: c.jev } : {}) })),
         keeps: plan.keeps,
+        takeSelection: { mode: sel.mode, model: sel.model, latencyMs: sel.latencyMs, warning: sel.warning, decisions: sel.decisions },
         kept: keptSpans,
         candidates: considered,
         loudnorm: loudness,
