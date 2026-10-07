@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# dependencies and build output
+node_modules/
+bin/
+
+# run output
+work/
+out/
+*.mp4
+*.mov
+*.m4a
+*.wav
+frames/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

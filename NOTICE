@@ -1,0 +1,13 @@
+jev-shorts-editor
+
+This project includes sound effect files from HyperFrames
+(https://github.com/heygen-com/hyperframes), licensed under the
+Apache License, Version 2.0:
+
+  assets/sfx/whoosh.mp3
+  assets/sfx/pop.mp3
+  assets/sfx/chime.mp3
+  assets/sfx/riser.mp3
+  assets/sfx/impact-bass-1.mp3
+
+A copy of the Apache License 2.0 is in assets/sfx/LICENSE-HYPERFRAMES.

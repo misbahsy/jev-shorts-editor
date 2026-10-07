@@ -1,0 +1,20 @@
+{
+  "name": "jev-shorts-editor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Turn a talking-head clip into an edited 1080x1920 short. Jev makes the editing decisions; a native WebKit renderer draws the graphics.",
+  "os": ["darwin"],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "short": "tsx src/short/auto.ts",
+    "build:renderer": "tsx scripts/build-renderer.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3"
+  }
+}
