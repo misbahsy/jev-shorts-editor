@@ -55,3 +55,13 @@ export const TAKE_BOUNDARY_GAP_SEC = 0.2;
 /** Word-edge refinement threshold: dead-air threshold plus this offset, never above the cap. */
 export const REFINE_OFFSET_DB = 10;
 export const REFINE_MAX_DB = -48;
+
+/** Take selection (takes.ts): phrases are split where the speaker pauses at least this long. */
+export const TAKES_PHRASE_GAP_SEC = 0.5;
+/** The LLM and Jev together may not remove more than this share of the spoken time. */
+export const TAKES_MAX_DROP_FRACTION = 0.4;
+/** A drop of this many words or fewer (a slip, a false start) needs no later twin if it stands alone. */
+export const TAKES_SLIP_MAX_WORDS = 2;
+export const TAKES_SLIP_WITH_TWIN_MAX_WORDS = 3;
+/** A longer drop needs this share of its content words said again later, within the retake window. */
+export const TAKES_TWIN_OVERLAP = 0.5;

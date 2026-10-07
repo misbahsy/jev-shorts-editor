@@ -18,6 +18,10 @@ export interface Cut {
   text: string;
   /** Jev's probability that the span is an abandoned take, for retake cuts. */
   jev?: number;
+  /** What decided the cut: "jev" and "llm" for retakes (both when they agree), "rule" for the rest. */
+  source?: "jev" | "llm" | "jev+llm" | "rule";
+  /** The take selector's reason, for retake cuts it proposed. */
+  why?: string;
 }
 
 /** A span of the raw source that is kept, in source time. */
@@ -72,4 +76,8 @@ export interface CleanStats {
   retakeMode: "jev" | "fallback" | "none";
   jevCalls: number;
   jevLatencyMs: number[];
+  /** Take selection by an LLM: "llm" ran, "fallback" failed and was skipped, "off" was not asked. */
+  takeSelection?: "llm" | "fallback" | "off";
+  /** Retake cuts the LLM proposed that the n-gram pass and Jev had not found. */
+  llmDrops?: number;
 }

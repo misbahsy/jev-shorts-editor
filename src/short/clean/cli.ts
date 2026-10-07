@@ -20,6 +20,7 @@ export function reviewMarkdown(r: Awaited<ReturnType<typeof cleanSource>>): stri
   lines.push(`Before ${s.beforeSec.toFixed(1)} s, after ${s.afterSec.toFixed(1)} s. Retake mode: ${s.retakeMode}.`);
   lines.push(`Removed: ${Object.entries(s.removedSec).map(([k, v]) => `${k} ${v.toFixed(1)} s`).join(", ")}.`);
   lines.push(`Retakes cut: ${s.retakesCut}. Fillers cut: ${s.fillersCut}. Zoom cut points: ${r.cutPoints.length}.`);
+  lines.push(`Take selection: ${s.takeSelection ?? "off"}, ${s.llmDrops ?? 0} retake cuts added by the LLM.`);
   lines.push(`Words recovered from untranscribed speech: ${s.recoveredWords ?? 0}. Voiced spans kept without words: ${s.untranscribedKept ?? 0}.`, "");
   lines.push("## Cleaned transcript", "");
   let para: string[] = [];
@@ -31,9 +32,9 @@ export function reviewMarkdown(r: Awaited<ReturnType<typeof cleanSource>>): stri
     }
   }
   if (para.length) lines.push(para.join(" "), "");
-  lines.push("## Cuts", "", "| source start | source end | length | reason | jev | removed words |", "|---|---|---|---|---|---|");
+  lines.push("## Cuts", "", "| source start | source end | length | reason | source | jev | removed words |", "|---|---|---|---|---|---|---|");
   for (const c of r.cuts) {
-    lines.push(`| ${c.start.toFixed(2)} | ${c.end.toFixed(2)} | ${(c.end - c.start).toFixed(2)} | ${c.reason} | ${c.jev?.toFixed(2) ?? ""} | ${c.text} |`);
+    lines.push(`| ${c.start.toFixed(2)} | ${c.end.toFixed(2)} | ${(c.end - c.start).toFixed(2)} | ${c.reason} | ${c.source ?? ""} | ${c.jev?.toFixed(2) ?? ""} | ${c.text}${c.why ? ` (${c.why})` : ""} |`);
   }
   if (r.keptSpans.length) {
     lines.push("", "## Kept without words", "", "| source start | source end | reason |", "|---|---|---|");
