@@ -15,8 +15,9 @@ import { findFillerSounds, planKeep } from "./keep";
 import { refineWords } from "./refine";
 import { REFINE_MAX_DB, REFINE_OFFSET_DB } from "./constants";
 import { cutPoints, keptDuration, remapWords } from "./remap";
+import { recoverUntranscribed, spansToProtect, type Retranscribe } from "./recover";
 import { findRetakeCandidates, mergeSpans, normWord, type RetakeCandidate } from "./retakes";
-import type { CleanOptions, CleanStats, Cut, CutReason, LoudnormMeasure, Range } from "./types";
+import type { CleanOptions, CleanStats, Cut, CutReason, KeptSpan, LoudnormMeasure, Range } from "./types";
 
 export interface CleanResult {
   /** Path of clean.mp4. */
@@ -31,6 +32,8 @@ export interface CleanResult {
   fps: number;
   width: number;
   height: number;
+  /** Voiced spans without words that were kept rather than cut. */
+  keptSpans: KeptSpan[];
   /** Loudnorm pass 1 measured on clean.mp4, for the final render's second pass. */
   loudness: LoudnormMeasure;
   stats: CleanStats;
@@ -42,6 +45,10 @@ export interface CleanOptionsIn {
   options?: Partial<CleanOptions>;
   /** Replaces the Jev call (tests). */
   jev?: JevCall;
+  /** Replaces the parakeet call that re-transcribes untranscribed voiced spans (tests). */
+  retranscribe?: Retranscribe;
+  /** Set false to skip the second look at voiced spans that have no words. */
+  recover?: boolean;
   /** Skips the ffmpeg cut and the loudness pass: plan only. */
   dryRun?: boolean;
   log?: (m: string) => void;
@@ -102,7 +109,26 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
   // just before an onset sit above the dead-air level but are still not speech.
   const edgeDb = Math.min(REFINE_MAX_DB, thr.thresholdDb + REFINE_OFFSET_DB);
   const edgeSilences = edgeDb > thr.thresholdDb ? detectSilence(srcPath, edgeDb, 0.1, pr.durationSec) : silences;
-  const words = refineWords(rawWords, edgeSilences);
+  let words = refineWords(rawWords, edgeSilences);
+
+  // Voiced audio with no words is never cut just for lacking words: re-transcribe those spans
+  // (one batch) and merge what comes back. Spans that stay empty are handled by the planner.
+  let stillEmpty: Awaited<ReturnType<typeof recoverUntranscribed>>["stillEmpty"] = [];
+  let recoveredWords = 0;
+  if (input.recover !== false) {
+    const rec = await recoverUntranscribed({
+      src: srcPath,
+      workDir,
+      words,
+      silences,
+      durationSec: pr.durationSec,
+      retranscribe: input.retranscribe ?? ((audio, dir) => transcribe(audio, dir, { preciseEnds: true })),
+      log,
+    });
+    words = rec.words;
+    stillEmpty = rec.stillEmpty;
+    recoveredWords = rec.added.length;
+  }
 
   // retakes: deterministic candidates, Jev confirms
   const cands = findRetakeCandidates(words);
@@ -123,7 +149,10 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
   }
   const fillerSounds = findFillerSounds(words, silences, pr.durationSec, opts);
 
-  const plan = planKeep({ words, removed, fillerSounds, durationSec: pr.durationSec, fps: pr.fps, opts, envelope: env });
+  const protect = spansToProtect(stillEmpty, new Set(removed.keys()));
+  const plan = planKeep({ words, removed, fillerSounds, durationSec: pr.durationSec, fps: pr.fps, opts, envelope: env, protect });
+  const keptSpans: KeptSpan[] = protect.map(p => ({ start: +p.start.toFixed(3), end: +p.end.toFixed(3), reason: "untranscribed_kept" as const }));
+  if (keptSpans.length) log(`clean: kept ${keptSpans.length} voiced spans with no words (${keptSpans.map(k => `${k.start.toFixed(1)}-${k.end.toFixed(1)}`).join(", ")})`);
   const afterSec = keptDuration(plan.keeps);
 
   const cleanPath = join(workDir, "clean.mp4");
@@ -144,15 +173,15 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
 
   const removedSec = emptyReasons();
   for (const c of plan.cuts) removedSec[c.reason] += c.end - c.start;
-  let fillerTokens = 0;
-  for (const r of removed.values()) if (r === "filler") fillerTokens++;
-  const fillerSoundsCut = fillerSounds.filter(f => plan.cuts.some(c => f.start >= c.start - 1e-6 && f.end <= c.end + 1e-6)).length;
   const stats: CleanStats = {
     beforeSec: pr.durationSec,
     afterSec,
     removedSec,
     retakesCut: accepted.length,
-    fillersCut: fillerTokens + fillerSoundsCut,
+    // the same rows clean.json lists, so the count and the file always agree
+    fillersCut: plan.cuts.filter(c => c.reason === "filler").length,
+    recoveredWords,
+    untranscribedKept: keptSpans.length,
     retakeMode: conf.mode,
     jevCalls: conf.calls,
     jevLatencyMs: conf.latencyMs,
@@ -177,6 +206,7 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
         stats,
         cuts: plan.cuts.map(c => ({ start: +c.start.toFixed(3), end: +c.end.toFixed(3), reason: c.reason, text: c.text, ...(c.jev !== undefined ? { jev: c.jev } : {}) })),
         keeps: plan.keeps,
+        kept: keptSpans,
         candidates: considered,
         loudnorm: loudness,
       },
@@ -187,6 +217,6 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
 
   return {
     cleanPath, words: outWords, keeps: plan.keeps, cuts: plan.cuts, cutPoints: points, durationSec: afterSec,
-    fps: pr.fps, width: pr.width, height: pr.height, loudness, stats,
+    fps: pr.fps, width: pr.width, height: pr.height, loudness, keptSpans, stats,
   };
 }

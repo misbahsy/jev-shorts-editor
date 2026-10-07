@@ -19,7 +19,8 @@ export function reviewMarkdown(r: Awaited<ReturnType<typeof cleanSource>>): stri
   const s = r.stats;
   lines.push(`Before ${s.beforeSec.toFixed(1)} s, after ${s.afterSec.toFixed(1)} s. Retake mode: ${s.retakeMode}.`);
   lines.push(`Removed: ${Object.entries(s.removedSec).map(([k, v]) => `${k} ${v.toFixed(1)} s`).join(", ")}.`);
-  lines.push(`Retakes cut: ${s.retakesCut}. Fillers cut: ${s.fillersCut}. Zoom cut points: ${r.cutPoints.length}.`, "");
+  lines.push(`Retakes cut: ${s.retakesCut}. Fillers cut: ${s.fillersCut}. Zoom cut points: ${r.cutPoints.length}.`);
+  lines.push(`Words recovered from untranscribed speech: ${s.recoveredWords ?? 0}. Voiced spans kept without words: ${s.untranscribedKept ?? 0}.`, "");
   lines.push("## Cleaned transcript", "");
   let para: string[] = [];
   for (const w of r.words) {
@@ -33,6 +34,10 @@ export function reviewMarkdown(r: Awaited<ReturnType<typeof cleanSource>>): stri
   lines.push("## Cuts", "", "| source start | source end | length | reason | jev | removed words |", "|---|---|---|---|---|---|");
   for (const c of r.cuts) {
     lines.push(`| ${c.start.toFixed(2)} | ${c.end.toFixed(2)} | ${(c.end - c.start).toFixed(2)} | ${c.reason} | ${c.jev?.toFixed(2) ?? ""} | ${c.text} |`);
+  }
+  if (r.keptSpans.length) {
+    lines.push("", "## Kept without words", "", "| source start | source end | reason |", "|---|---|---|");
+    for (const k of r.keptSpans) lines.push(`| ${k.start.toFixed(2)} | ${k.end.toFixed(2)} | ${k.reason} |`);
   }
   return lines.join("\n") + "\n";
 }

@@ -8,7 +8,7 @@ On an Apple Silicon Mac, a 40 second clip takes about 9 seconds to plan and abou
 
 ## What you get
 
-- **A clean take.** Retakes, dead air and filler sounds are cut out before anything else happens. When you say a line twice, only the last take stays. Long pauses shrink to a short breath, and the silence before the first word and after the last one is trimmed. Every cut is written to `clean.json` in the work folder.
+- **A clean take.** Retakes, dead air and filler sounds are cut out before anything else happens. When you say a line twice, only the last take stays. Long pauses shrink to a short breath, and the silence before the first word and after the last one is trimmed. Audio that sounds like speech is never cut just because the transcript missed it: those stretches are transcribed again, and any that still have no words are kept. Every cut is written to `clean.json` in the work folder.
 - **Cuts that do not jump.** The framing alternates between normal and a slight punch-in at each cut, so a jump cut reads as a camera change. Audio is faded at every join.
 - **Consistent loudness.** The final mix is high-passed and normalized to about -14 LUFS with a true peak of -1 dBTP.
 - **Vertical reframing.** Faces are found with Apple Vision, so the speaker stays in frame when a wide shot becomes 9:16.
@@ -171,7 +171,7 @@ The clean stage adds time up front, mostly the one transcription plus the ffmpeg
 
 ## Troubleshooting
 
-**It cut something I wanted.** Open `clean.json` in the work folder. Each cut lists its time range, the reason (`retake`, `silence`, `filler`, `lead` or `tail`) and the words that were removed. Retakes also carry the Jev score that approved them. If the cuts are wrong for your clip, run again with `--no-clean` to use the video untouched.
+**It cut something I wanted.** Open `clean.json` in the work folder. Each cut lists its time range, the reason (`retake`, `silence`, `filler`, `lead` or `tail`) and the words that were removed. Voiced stretches that were kept because they had no transcribed words are listed under `kept` as `untranscribed_kept`. Retakes also carry the Jev score that approved them. If the cuts are wrong for your clip, run again with `--no-clean` to use the video untouched.
 
 **`TYPESAFE_API_KEY is not set` or `GROQ_API_KEY is not set`.** Copy `.env.example` to `.env` in the repo root and fill in both keys, or export them in your shell.
 

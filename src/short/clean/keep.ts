@@ -57,6 +57,8 @@ export interface PlanInput {
   opts: CleanOptions;
   /** 10 ms RMS levels of the source audio. When given, cut edges avoid voiced sounds. */
   envelope?: number[];
+  /** Voiced spans without words that must stay in the output (with the breath around them). */
+  protect?: Range[];
 }
 
 export interface KeepPlan {
@@ -96,8 +98,41 @@ export function findFillerSounds(words: Word[], silences: Interval[], durationSe
   return out;
 }
 
+/**
+ * Removes the protected spans (plus the breath on each side, rounded out to frames) from the
+ * cuts, splitting a cut in two when a span sits in its middle. The kept side only ever grows.
+ */
+function subtractProtected(cuts: Cut[], protect: Range[], opts: CleanOptions, fps: number, durationSec: number): Cut[] {
+  const frame = 1 / fps;
+  const ranges = protect
+    .map(p => ({
+      start: Math.max(0, Math.floor((p.start - opts.padBefore) * fps + 1e-6) * frame),
+      end: Math.min(durationSec, Math.ceil((p.end + opts.padAfter) * fps - 1e-6) * frame),
+    }))
+    .sort((a, b) => a.start - b.start);
+  const out: Cut[] = [];
+  for (const c of cuts) {
+    let pieces: Cut[] = [{ ...c }];
+    for (const r of ranges) {
+      const next: Cut[] = [];
+      for (const pc of pieces) {
+        if (r.end <= pc.start || r.start >= pc.end) {
+          next.push(pc);
+          continue;
+        }
+        if (r.start > pc.start) next.push({ ...pc, end: r.start });
+        if (r.end < pc.end) next.push({ ...pc, start: r.end });
+      }
+      pieces = next;
+    }
+    for (const pc of pieces) if (pc.end - pc.start >= Math.max(MIN_CUT_SEC, frame * 1.5)) out.push(pc);
+  }
+  return out;
+}
+
 export function planKeep(input: PlanInput): KeepPlan {
   const { words, removed, fillerSounds, durationSec, fps, opts, envelope } = input;
+  const protect = input.protect ?? [];
   const kept = words.filter(w => !removed.has(w.i));
   if (kept.length === 0) return { cuts: [], keeps: [{ start: 0, end: durationSec }] };
 
@@ -177,7 +212,7 @@ export function planKeep(input: PlanInput): KeepPlan {
         if (sg.text) last.text = last.text ? `${last.text} ${sg.text}` : sg.text;
       } else folded.push({ ...sg });
     }
-    snapped.push(...folded);
+    snapped.push(...(protect.length ? subtractProtected(folded, protect, opts, fps, durationSec) : folded));
   }
   const keeps: Range[] = [];
   let cursor = 0;

@@ -4,9 +4,12 @@
 // window against film.html, and steps a contiguous, disjoint range of the GLOBAL
 // frame index (t = i/30), writing frames/%05d.png per frame.
 //
-// Stage 7: ONE ffmpeg invocation. Per-"shot" (maximal run of beats sharing layout +
-// effective punchIn) trim/setpts/crop-or-pad/scale of the source video, concat all
-// shots, overlay the captured PNG sequence (alpha), mix source audio with sfx, encode
+// Stage 7: ONE ffmpeg invocation. The shot list comes from framing.ts (shared with the
+// preview): one shot per beat, split further at every clean-stage cut so the framing
+// alternates between the base crop and a ~1.12x punch-in there. Each shot is a
+// trim/setpts/crop-or-pad/scale of the source video; shots are concatenated, the captured
+// PNG sequence (alpha) is overlaid, and the source audio (highpass, then two-pass loudnorm
+// when the plan carries a loudness measurement) is mixed with the sfx and limited. Encode is
 // h264_videotoolbox.
 //
 // CLI (mainly for the worker benchmark + standalone testing against a fixture):

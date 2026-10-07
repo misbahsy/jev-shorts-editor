@@ -87,18 +87,23 @@ with precise word ends, and never looked at again after this stage.
    confirms each one (`confirm.ts`, one noul question per candidate, cut at `JEV_CUT_THRESHOLD` 0.5). The
    LAST take is kept; for a 2 to 4 word stutter the second occurrence is kept. If Jev is unavailable the
    deterministic candidates with at least `FALLBACK_MIN_MATCH` matching words are cut instead, with a warning.
-2. `keep.ts` turns removed words, gaps and voiced non-word sounds into KEEP ranges. Gaps over 0.35 s shrink to
+2. `recover.ts` guards against speech the transcript lacks. Voiced spans (silencedetect, relative to clip
+   loudness) of at least 0.6 s with no words are re-transcribed together in one batched parakeet call (spans padded
+   0.3 s, 1 s of silence between them) and the words are merged back with their offsets. A span that is still
+   empty and at least 1.2 s long is protected: no cut may touch it, and `clean.json` lists it under `kept` with
+   reason `untranscribed_kept`. Shorter empty spans stay eligible for the filler rule.
+3. `keep.ts` turns removed words, gaps and voiced non-word sounds into KEEP ranges. Gaps over 0.35 s shrink to
    0.12 s after the previous word and 0.10 s before the next, the lead and tail trim to the same padding.
    Edges snap to quiet audio and to frames, so no cut lands inside a word.
-3. `cut.ts` makes `work/clean.mp4` in one ffmpeg call: trim and atrim per KEEP range, 30 ms audio fades at
+4. `cut.ts` makes `work/clean.mp4` in one ffmpeg call: trim and atrim per KEEP range, 30 ms audio fades at
    each join, concat, frame-accurate, h264_videotoolbox at a high bitrate and AAC 256k.
-4. `remap.ts` moves the surviving words onto the clean clock; `cutPoints` gives `plan.cuts`.
-5. `ffmpegTools.ts` measures loudnorm pass 1 on clean.mp4 (after a highpass at 80 Hz). The final render applies
+5. `remap.ts` moves the surviving words onto the clean clock; `cutPoints` gives `plan.cuts`.
+6. `ffmpegTools.ts` measures loudnorm pass 1 on clean.mp4 (after a highpass at 80 Hz). The final render applies
    pass 2 once, on the final mix, with `linear=true` and a -1 dBFS ceiling limiter.
 
 `work/clean.json` lists every cut as `{start, end, reason, text, jev?}` with `reason` one of `retake`,
 `silence`, `filler`, `lead`, `tail` (times are on the RAW clock), plus the KEEP ranges, every retake
-candidate with its score, and the stats. `npm test` covers the pure parts with synthetic word lists.
+candidate with its score, the `kept` spans (voiced audio without words that was left alone), and the stats. `npm test` covers the pure parts with synthetic word lists.
 
 ## Option menus (ids are the contract; descriptions for Jev live in `menus.ts`)
 

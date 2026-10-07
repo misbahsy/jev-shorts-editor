@@ -2,6 +2,13 @@
 
 export type CutReason = "retake" | "silence" | "filler" | "lead" | "tail";
 
+/** A voiced span with no transcribed words that the cutter refused to delete. */
+export interface KeptSpan {
+  start: number;
+  end: number;
+  reason: "untranscribed_kept";
+}
+
 /** A span of the raw source that is removed from the cleaned video. */
 export interface Cut {
   start: number;
@@ -54,6 +61,10 @@ export interface CleanStats {
   retakesCut: number;
   /** Cuts with reason "filler" (explicit tokens plus voiced non-word sounds). */
   fillersCut: number;
+  /** Words added by re-transcribing voiced spans the first pass left empty. */
+  recoveredWords?: number;
+  /** Voiced spans with no words that were kept rather than cut (reason "untranscribed_kept"). */
+  untranscribedKept?: number;
   /** Whether Jev confirmed the retakes, or the deterministic fallback decided. */
   retakeMode: "jev" | "fallback" | "none";
   jevCalls: number;
