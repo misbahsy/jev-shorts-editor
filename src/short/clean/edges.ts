@@ -147,3 +147,27 @@ export function wordEdges(env: number[], words: Word[], durationSec: number): Wo
   }
   return out;
 }
+
+/**
+ * The words with their times replaced by the real sound edges, kept in order and never shorter
+ * than MIN_WORD_SEC. Cut edges sit outside these times, so every kept word lies inside a keep
+ * range and survives remapWords, with caption times that match the audio.
+ */
+export function snapWordsToEdges(words: Word[], edges: WordEdges[]): Word[] {
+  const MIN_WORD_SEC = 0.04;
+  const out: Word[] = [];
+  let prevEnd = 0;
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k];
+    let start = Math.max(edges[k].onset.t, prevEnd);
+    let end = edges[k].offset.t;
+    if (end - start < MIN_WORD_SEC) {
+      // the edges collapsed (a word the audio barely has): keep the transcript's own span
+      start = Math.max(w.start, prevEnd);
+      end = Math.max(w.end, start + MIN_WORD_SEC);
+    }
+    out.push({ ...w, start, end });
+    prevEnd = end;
+  }
+  return out;
+}

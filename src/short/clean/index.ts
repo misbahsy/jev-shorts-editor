@@ -11,6 +11,7 @@ import { DEFAULT_CLEAN, FILLER_TOKENS } from "./constants";
 import { adaptiveSilenceDb, detectSilence, loudnessEnvelope, measureLoudnorm } from "./ffmpegTools";
 import { confirmRetakes, type Confirmed, type JevCall } from "./confirm";
 import { cutVideo } from "./cut";
+import { snapWordsToEdges, wordEdges } from "./edges";
 import { findFillerSounds, planKeep } from "./keep";
 import { refineWords } from "./refine";
 import { REFINE_MAX_DB, REFINE_OFFSET_DB } from "./constants";
@@ -187,7 +188,8 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
     jevLatencyMs: conf.latencyMs,
   };
 
-  const outWords = remapWords(words, plan.keeps);
+  // captions use the real sound edges, so every kept word sits inside a keep range
+  const outWords = remapWords(snapWordsToEdges(words, wordEdges(env, words, pr.durationSec)), plan.keeps);
   const points = cutPoints(plan.keeps);
 
   const considered = (conf.scored.length ? conf.scored.map(s => s.cand) : cands).map((c: RetakeCandidate) => {
