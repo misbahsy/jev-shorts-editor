@@ -9,6 +9,7 @@ import {
   STYLE_FAMILY_MENU,
   ACCENT_MENU,
   CAPTION_STYLE_MENU,
+  HOOK_MENU,
   ENERGY_SCORE_CRITERIA,
   TEXT_EFFECT_MENU,
   TRANSITION_MENU,
@@ -189,6 +190,7 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
     style_family: { type: "choice", instructions: "Pick the single visual style family that best fits this whole video's content and tone.", criteria: STYLE_FAMILY_MENU },
     accent: { type: "choice", instructions: "Pick the single accent color that best fits this whole video's mood.", criteria: ACCENT_MENU },
     caption_style: { type: "choice", instructions: "Pick the caption style that best fits this whole video's pacing and content.", criteria: CAPTION_STYLE_MENU },
+    hook_style: { type: "choice", instructions: "Pick the opening-title look that best fits how this video opens, judged from the first sentences.", criteria: HOOK_MENU },
     energy: { type: "score", instructions: "Rate the overall energy/delivery level of the speaker across this whole video.", criteria: ENERGY_SCORE_CRITERIA },
     progress_bar: {
       type: "noul",
@@ -261,6 +263,9 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
     captionStyle: { choice: asChoice(globalResult.response.answers.caption_style).choice as any, probabilities: asChoice(globalResult.response.answers.caption_style).probabilities, confidence: asChoice(globalResult.response.answers.caption_style).confidence },
     energy: { score: asScore(globalResult.response.answers.energy).score, probabilities: asScore(globalResult.response.answers.energy).probabilities, confidence: asScore(globalResult.response.answers.energy).confidence },
     progressBar: { noul: asNoul(globalResult.response.answers.progress_bar).noul },
+    hookStyle: globalResult.response.answers.hook_style
+      ? { choice: asChoice(globalResult.response.answers.hook_style).choice as any, probabilities: asChoice(globalResult.response.answers.hook_style).probabilities, confidence: asChoice(globalResult.response.answers.hook_style).confidence }
+      : undefined,
   };
 
   const beatDecisions: BeatDecision[] = beatResults.map(({ beat, result }) => {

@@ -23,6 +23,8 @@ import { fillCopy } from "./copy";
 import { finalize } from "./finalize";
 import { computeGeometry } from "./geometry";
 import { cleanSource, type CleanResult } from "./clean";
+import { DEFAULT_HOOK_STYLE, applyHookStructure, buildHookPlan, hookOpeningText, leakTimes, pickHookEnd } from "./hook";
+import { buildCutout } from "./matte";
 import type { ShortPlan } from "./types";
 import type { Word } from "./transcribe";
 
@@ -66,6 +68,8 @@ function probeSource(srcPath: string): Probe {
 export interface PlanOptions {
   /** Run the clean stage (default true). false = the original behavior, raw clip in and out. */
   clean?: boolean;
+  /** Build the opening hook (giant title behind the speaker) and light leaks (default true). */
+  hook?: boolean;
   /** Progress hook for the clean stage's own log lines. */
   log?: (m: string) => void;
 }
@@ -138,12 +142,23 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
   writeFileSync(join(workDir, "beats.json"), JSON.stringify(beats, null, 2));
 
   const tStructure = Date.now();
-  const structure = assembleStructure(beats, decisions);
+  let structure = assembleStructure(beats, decisions);
+  // the opening hook owns the first seconds: full framing there, no card under it
+  const useHook = options.hook !== false;
+  const hookStyle = decisions.global.hookStyle?.choice ?? DEFAULT_HOOK_STYLE;
+  const hookEnd = pickHookEnd(words, beats.map(b => b.start), probe.durationSec);
+  let visualFrom: Record<string, number> = {};
+  if (useHook) {
+    const applied = applyHookStructure(structure, beats, decisions.beats, hookEnd);
+    structure = applied.structure;
+    visualFrom = applied.visualFrom;
+  }
   timings.structureMs = Date.now() - tStructure;
   writeFileSync(join(workDir, "structure.json"), JSON.stringify(structure, null, 2));
 
   const tCopy = Date.now();
-  const copy = await fillCopy(beats, structure, words, meta);
+  const opening = hookOpeningText(words, hookEnd);
+  const copy = await fillCopy(beats, structure, words, meta, useHook ? { opening, style: hookStyle } : undefined);
   timings.copyMs = Date.now() - tCopy;
   writeFileSync(join(workDir, "copy.json"), JSON.stringify(copy, null, 2));
 
@@ -168,6 +183,30 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
     plan.clean = clean.stats;
   }
   timings.finalizeMs = Date.now() - tFinalize;
+
+  if (useHook) {
+    for (const b of plan.beats) if (visualFrom[b.id] !== undefined && b.visual) b.visualFrom = visualFrom[b.id];
+    // the person cut-out needs the final layouts and cuts, so it runs after finalize
+    const tCut = Date.now();
+    const faceReliable = perception.hasReliableFace !== false;
+    const cut = faceReliable
+      ? buildCutout(plan, workDir, hookEnd, { quality: (process.env.JEV_MATTE_QUALITY as "fast" | "balanced" | "accurate" | undefined) ?? "balanced" })
+      : { ok: false, frames: 0, reason: "no reliable face for a cut-out", ms: { extract: 0, matte: 0, merge: 0, total: 0 }, quality: "balanced" as const };
+    timings.cutoutMs = Date.now() - tCut;
+    timings.cutoutExtractMs = cut.ms.extract;
+    timings.cutoutMatteMs = cut.ms.matte;
+    timings.cutoutMergeMs = cut.ms.merge;
+    options.log?.(cut.ok ? `hook cut-out: ${cut.frames} frames in ${timings.cutoutMs} ms` : `hook cut-out unavailable (${cut.reason}); front fallback`);
+    plan.hook = buildHookPlan({
+      style: hookStyle,
+      copy: copy.hook,
+      opening,
+      endSec: hookEnd,
+      cutout: cut,
+      faceTopFrac: geometry.full.face.h > 0 ? geometry.full.face.y / plan.output.height : 0.2,
+    });
+    plan.fx = { leaks: leakTimes(plan.beats, hookEnd) };
+  }
   timings.totalMs = Date.now() - t0;
 
   plan.timings = timings;

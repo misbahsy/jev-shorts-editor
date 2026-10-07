@@ -146,7 +146,7 @@ function splitCropFilter(plan: ShortPlan, punchIn: boolean): string {
   return c ? `crop=${c.w}:${c.h}:${c.x}:${c.y},` : "";
 }
 
-function shotFilter(shot: Shot, plan: ShortPlan, idx: number): string {
+export function shotFilter(shot: Shot, plan: ShortPlan, idx: number): string {
   const label = `s${idx}`;
   if (shot.layout === "split") {
     return (

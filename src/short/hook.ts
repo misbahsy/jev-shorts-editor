@@ -12,7 +12,8 @@
  */
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Beat, CaptionStyleId, HookStyleId, Word } from "./types";
+import { bestTemplateForLayout, type BeatStructure } from "./structure";
+import type { Beat, BeatDecision, CaptionStyleId, HookPlan, HookStyleId, RawBeat, Word } from "./types";
 
 export const PRESET_DIR = resolve(import.meta.dirname, "film", "presets24");
 const FPS = 30;
@@ -288,4 +289,80 @@ export function leakEnvelope(t: number, times: number[]): number {
     if (v > best) best = v;
   }
   return Math.round(best * 1000) / 1000;
+}
+
+// ---- structure + plan ----
+
+/**
+ * The hook owns the first seconds: beats that start inside the hook window are framed `full` (the
+ * cut-out and the giant word are built for the full-bleed crop), a beat that ends inside the window
+ * gets no card of its own, and a beat that straddles the end keeps its card but only shows it from
+ * `hookEnd` (returned in `visualFrom`). Pure: returns a new structure array.
+ */
+export function applyHookStructure(
+  structure: BeatStructure[],
+  beats: Pick<RawBeat, "id" | "start" | "end">[],
+  decisions: BeatDecision[],
+  hookEnd: number,
+): { structure: BeatStructure[]; visualFrom: Record<string, number> } {
+  const out = structure.map(s => ({ ...s }));
+  const visualFrom: Record<string, number> = {};
+  let last = -1;
+  beats.forEach((b, i) => {
+    if (b.start >= hookEnd - 1e-6) return;
+    last = i;
+    const st = out[i];
+    if (st.layout === "split") {
+      st.layout = "full";
+      if (st.template) st.template = bestTemplateForLayout(decisions[i], "full");
+    }
+    st.punchIn = false;
+    if (b.end <= hookEnd + 0.15) {
+      st.hasVisual = false;
+      st.template = null;
+    } else if (st.hasVisual) {
+      visualFrom[b.id] = snap(hookEnd);
+    }
+    st.transitionIn = "hard_cut";
+  });
+  // the first beat after the hook: a transition only when something visibly changes
+  const next = out[last + 1];
+  if (next && last >= 0) {
+    const prev = out[last];
+    if (next.layout === prev.layout && next.template === prev.template) next.transitionIn = "hard_cut";
+  }
+  return { structure: out, visualFrom };
+}
+
+/** Builds the HookPlan from the model's copy once it is known whether a cut-out exists. */
+export function buildHookPlan(args: {
+  style: HookStyleId;
+  copy: { word?: unknown; line?: unknown } | undefined;
+  opening: string;
+  endSec: number;
+  cutout: { ok: boolean; frames: number; reason?: string };
+  faceTopFrac: number;
+}): HookPlan {
+  const presetId = HOOK_PRESET_BY_STYLE[args.style];
+  const text = normalizeHookCopy(args.copy, args.opening);
+  let bound = bindHook(presetId, text, args.endSec);
+  const needs = hasBehindLayer(bound.preset);
+  const cutout = args.cutout.ok && args.cutout.frames > 0;
+  let fallbackReason: string | undefined;
+  if (needs && !cutout) {
+    bound = frontFallback(bound, args.faceTopFrac);
+    fallbackReason = args.cutout.reason ?? "no cut-out";
+  }
+  return {
+    style: args.style,
+    presetId,
+    endSec: args.endSec,
+    cutout: needs && cutout,
+    fgFrames: needs && cutout ? args.cutout.frames : 0,
+    fgDir: "fg",
+    word: text.word,
+    line: text.line,
+    preset: bound.preset,
+    ...(fallbackReason ? { fallbackReason } : {}),
+  };
 }

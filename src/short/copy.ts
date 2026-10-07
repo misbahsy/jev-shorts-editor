@@ -18,6 +18,14 @@ export interface Copy {
   beats: Record<string, Record<string, unknown>>; // RAW, unvalidated model output per beat
   corrections: { i: number; text: string }[];
   latencyMs: number;
+  /** Raw hook copy (validated in hook.ts normalizeHookCopy); present only when a hook was requested. */
+  hook?: { word?: unknown; line?: unknown };
+}
+
+/** The opening the hook title is written from: spoken text of the first seconds + the look chosen. */
+export interface HookRequest {
+  opening: string;
+  style: string;
 }
 
 // Benchmarked (see bench_models.ts / report): gpt-oss-20b is fastest (~1.5s avg) but missed the
@@ -74,6 +82,7 @@ export function buildPrompt(
   structure: BeatStructure[],
   words: Word[],
   meta: { title: string; sceneDescription?: string },
+  hook?: HookRequest,
 ): string {
   const transcript = beats.map((b, i) => `${i + 1}. ${b.text}`).join("\n");
   const wordList = words.map(w => `${w.i}:${w.text}`).join(" ");
@@ -89,6 +98,20 @@ export function buildPrompt(
     .join("\n");
 
   const sceneLine = meta.sceneDescription ? `WHAT IS ON SCREEN: ${meta.sceneDescription}\n` : "";
+
+  const hookBlock = hook
+    ? `
+OPENING HOOK TITLE: the first seconds of the video get a giant title word behind the speaker (look: ${hook.style}).
+The speaker's opening words: "${hook.opening}"
+Write hook.word: ONE word (two at most), the single most striking word or figure from the opening, taken from
+the speech, no more than 12 characters (a number such as "10X" or "$0.04" is fine for a number look; a question
+word for a question look). Write hook.line: a short supporting line of at most 6 words from the same opening.
+Never invent facts or numbers that were not spoken.
+`
+    : "";
+  const shape = hook
+    ? `{"beats": {"<beatId>": {<fields for that beat's template>}}, "corrections": [{"i": <word index>, "text": "<corrected text>"}], "hook": {"word": "<giant word>", "line": "<short line>"}}`
+    : `{"beats": {"<beatId>": {<fields for that beat's template>}}, "corrections": [{"i": <word index>, "text": "<corrected text>"}]}`;
 
   return `You are writing on-screen text for a vertical short-form video edit. Source: "${meta.title}".
 ${sceneLine}The ASR transcript may contain proper-noun or technical-term errors (this video's subject matter is
@@ -131,9 +154,9 @@ verbatim; no emojis except in an "emoji" field; never invent facts not present i
 
 BEATS NEEDING FIELDS:
 ${beatBlocks}
-
+${hookBlock}
 Respond with JSON only, matching this shape exactly:
-{"beats": {"<beatId>": {<fields for that beat's template>}}, "corrections": [{"i": <word index>, "text": "<corrected text>"}]}`;
+${shape}`;
 }
 
 function clampWords(s: string, maxWords: number): string {
@@ -246,8 +269,9 @@ export async function fillCopy(
   structure: BeatStructure[],
   words: Word[],
   meta: { title: string; sceneDescription?: string },
+  hook?: HookRequest,
 ): Promise<Copy> {
-  const prompt = buildPrompt(beats, structure, words, meta);
+  const prompt = buildPrompt(beats, structure, words, meta, hook);
   const start = Date.now();
 
   let raw: unknown;
@@ -266,7 +290,7 @@ export async function fillCopy(
   }
   const latencyMs = Date.now() - start;
 
-  const parsed = raw as { beats?: Record<string, Record<string, unknown>>; corrections?: { i: number; text: string }[] };
+  const parsed = raw as { beats?: Record<string, Record<string, unknown>>; corrections?: { i: number; text: string }[]; hook?: { word?: unknown; line?: unknown } };
   const outBeats: Record<string, Record<string, unknown>> = {};
   beats.forEach((b, idx) => {
     if (structure[idx].hasVisual && structure[idx].template) outBeats[b.id] = parsed.beats?.[b.id] ?? {};
@@ -276,5 +300,6 @@ export async function fillCopy(
     ? parsed.corrections.filter(c => typeof c?.i === "number" && typeof c?.text === "string")
     : [];
 
-  return { beats: outBeats, corrections, latencyMs };
+  const hookOut = hook && parsed.hook && typeof parsed.hook === "object" ? { word: parsed.hook.word, line: parsed.hook.line } : undefined;
+  return { beats: outBeats, corrections, latencyMs, ...(hookOut ? { hook: hookOut } : {}) };
 }

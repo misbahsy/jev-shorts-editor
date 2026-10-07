@@ -55,7 +55,7 @@ function nextHighestExcluding(probabilities: Record<string, number>, exclude: Se
 }
 
 /** Best template (by probability) whose underChin-ness matches the target layout. */
-function bestTemplateForLayout(dec: BeatDecision, layout: "full" | "split"): TemplateId {
+export function bestTemplateForLayout(dec: BeatDecision, layout: "full" | "split"): TemplateId {
   const wantUnderChin = layout === "full";
   const entries = Object.entries(dec.template.probabilities) as [TemplateId, number][];
   const filtered = entries.filter(([id]) => isUnderChin(id) === wantUnderChin);

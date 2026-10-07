@@ -44,6 +44,18 @@ export const CAPTION_STYLE_MENU: Record<string, string> = {
   karaoke_line: "The whole line is on screen, upcoming words held back in grey while an accent bar swipes under each word as it is spoken — readable, calmer pacing.",
   boxed_highlight: "The spoken word sits in a glowing accent gradient pill inside the line — bold, high-contrast, brand-forward.",
   typewriter_line: "A monospace line typed out character by character with a caret — deliberate, narrative, documentary feel.",
+  anton_karaoke: "Tall condensed ALL-CAPS words, three at a time, the spoken word lighting up yellow like a karaoke bar — loud, trailer-style, high-energy talk.",
+  archivo_chip: "Heavy black-weight words with the spoken word sitting in a red chip — attention-grabbing, opinionated, news-flash and hot-take delivery.",
+  inter_editorial: "Clean bold sans lowercase lines with emphasised words flipping to a large italic serif, spoken word brightening — calm, thoughtful, editorial explainer.",
+};
+
+/** Opening hook looks: a giant 24fps title that sits behind the speaker for the first ~3 s. */
+export const HOOK_MENU: Record<string, string> = {
+  giant_word: "One giant ALL-CAPS keyword of the opening line fills the frame behind the speaker's head, with a short line beneath — the opening makes a bold claim or names the subject.",
+  giant_number: "A giant number or statistic stands behind the speaker's head — the opening leads with a figure, a count, a price, or a time span.",
+  giant_question: "A giant question word or phrase hangs behind the speaker — the opening asks a question or poses a puzzle the video will answer.",
+  focus_word: "A tall solid keyword rises behind the speaker with a small monospace label in front — the opening introduces a tool, product, or technical topic.",
+  ghost_topic: "The topic word is cropped along the top edge, with a faint outlined echo beside it — the opening sets up a subject calmly, a softer start with no shouting.",
 };
 
 export const TEXT_EFFECT_MENU: Record<string, string> = {
