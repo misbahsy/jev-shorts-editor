@@ -11,3 +11,16 @@ Apache License, Version 2.0:
   assets/sfx/impact-bass-1.mp3
 
 A copy of the Apache License 2.0 is in assets/sfx/LICENSE-HYPERFRAMES.
+
+This project vendors the 24fps editor engine from https://24fps.dev/video-editor
+(https://24fps.dev/editor/engine.js, v0.4.0), licensed under the MIT License as
+stated in the file header:
+
+  src/short/film/vendor/engine.js
+
+It also vendors preset JSON from the 24fps video-editor library (credit:
+24fps.dev/video-editor) in src/short/film/presets24/, recorded one by one in
+src/short/film/presets24/manifest.json, and latin-subset woff2 files of Google
+Fonts families (SIL Open Font License or Apache License 2.0, per family) in
+src/short/film/vendor/fonts/ so that nothing is fetched at render time. The
+preset API returns no per-preset author or license field.

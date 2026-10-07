@@ -1,0 +1,33 @@
+{
+ "id": "warm-light-leak-drift-recurring-e5x",
+ "name": "Recurring warm light leaks",
+ "summary": "Short (0.3 s) pink-orange and white-yellow leaks drift in from the frame edge about every 1.2-1.5 s after the opening flash, over a warm graded, grainy, vignetted shot.",
+ "use_when": "Travel, wellness and lifestyle talking heads that need small warm accents between cuts.",
+ "tags": [
+  "ai-caption-style",
+  "light-leak",
+  "warm",
+  "grain",
+  "vignette"
+ ],
+ "needs_cutout": false,
+ "kind": "effect",
+ "preset": {
+  "type": "light-leak",
+  "beats": [
+   0.24,
+   3.1,
+   4.4
+  ],
+  "dur": 0.3,
+  "grain": true,
+  "vignette": 0.4,
+  "grade": {
+   "contrast": 1.08,
+   "saturate": 1.15,
+   "sepia": 0.1,
+   "tint": "rgba(255,150,40,.18)",
+   "tintBlend": "soft-light"
+  }
+ }
+}

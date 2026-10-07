@@ -1,0 +1,146 @@
+{
+ "engine": {
+  "file": "vendor/engine.js",
+  "version": "0.4.0",
+  "license": "MIT",
+  "source": "https://24fps.dev/editor/engine.js",
+  "page": "https://24fps.dev/video-editor"
+ },
+ "fonts": {
+  "dir": "vendor/fonts",
+  "index": "vendor/fonts/fonts.json",
+  "license": "Google Fonts (SIL Open Font License / Apache 2.0, per family), latin subset woff2 fetched from fonts.gstatic.com and vendored; nothing loads at render time"
+ },
+ "presets": [
+  {
+   "id": "giant-word-behind-head",
+   "kind": "text",
+   "role": "hook",
+   "file": "presets24/giant-word-behind-head.json",
+   "page": "https://24fps.dev/video-editor/hooks/giant-word-behind-head",
+   "presetUrl": "https://24fps.dev/video-editor/hooks/giant-word-behind-head/preset.json",
+   "needsCutout": true,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "giant-number-behind-head",
+   "kind": "text",
+   "role": "hook",
+   "file": "presets24/giant-number-behind-head.json",
+   "page": "https://24fps.dev/video-editor/hooks/giant-number-behind-head",
+   "presetUrl": "https://24fps.dev/video-editor/hooks/giant-number-behind-head/preset.json",
+   "needsCutout": true,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "giant-question-behind-head",
+   "kind": "text",
+   "role": "hook",
+   "file": "presets24/giant-question-behind-head.json",
+   "page": "https://24fps.dev/video-editor/hooks/giant-question-behind-head",
+   "presetUrl": "https://24fps.dev/video-editor/hooks/giant-question-behind-head/preset.json",
+   "needsCutout": true,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "focus-behind-subject-solid",
+   "kind": "text",
+   "role": "hook",
+   "file": "presets24/focus-behind-subject-solid.json",
+   "page": "https://24fps.dev/video-editor/text/focus-behind-subject-solid",
+   "presetUrl": "https://24fps.dev/video-editor/text/focus-behind-subject-solid/preset.json",
+   "needsCutout": true,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "giant-white-word-top-cropped-behind",
+   "kind": "text",
+   "role": "hook",
+   "file": "presets24/giant-white-word-top-cropped-behind.json",
+   "page": "https://24fps.dev/video-editor/text/giant-white-word-top-cropped-behind",
+   "presetUrl": "https://24fps.dev/video-editor/text/giant-white-word-top-cropped-behind/preset.json",
+   "needsCutout": true,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "pop-anton-yellow-karaoke",
+   "kind": "captions",
+   "role": "captions",
+   "file": "presets24/pop-anton-yellow-karaoke.json",
+   "page": "https://24fps.dev/video-editor/captions/pop-anton-yellow-karaoke",
+   "presetUrl": "https://24fps.dev/video-editor/captions/pop-anton-yellow-karaoke/preset.json",
+   "needsCutout": false,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "pop-archivo-red-chip",
+   "kind": "captions",
+   "role": "captions",
+   "file": "presets24/pop-archivo-red-chip.json",
+   "page": "https://24fps.dev/video-editor/captions/pop-archivo-red-chip",
+   "presetUrl": "https://24fps.dev/video-editor/captions/pop-archivo-red-chip/preset.json",
+   "needsCutout": false,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "ed-inter-instrument",
+   "kind": "captions",
+   "role": "captions",
+   "file": "presets24/ed-inter-instrument.json",
+   "page": "https://24fps.dev/video-editor/captions/ed-inter-instrument",
+   "presetUrl": "https://24fps.dev/video-editor/captions/ed-inter-instrument/preset.json",
+   "needsCutout": false,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "warm-light-leak-drift-recurring-e5x",
+   "kind": "effect",
+   "role": "effect",
+   "file": "presets24/warm-light-leak-drift-recurring-e5x.json",
+   "page": "https://24fps.dev/video-editor/effect/warm-light-leak-drift-recurring-e5x",
+   "presetUrl": "https://24fps.dev/video-editor/effect/warm-light-leak-drift-recurring-e5x/preset.json",
+   "needsCutout": false,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  },
+  {
+   "id": "light-leak-flash-red-grade",
+   "kind": "effect",
+   "role": "effect",
+   "file": "presets24/light-leak-flash-red-grade.json",
+   "page": "https://24fps.dev/video-editor/effect/light-leak-flash-red-grade",
+   "presetUrl": "https://24fps.dev/video-editor/effect/light-leak-flash-red-grade/preset.json",
+   "needsCutout": false,
+   "credit": "24fps.dev/video-editor",
+   "author": null,
+   "license": null,
+   "licenseNote": "API response carries no author or license field; its agent_prompt only asks for the credit line 'Credit: 24fps.dev/video-editor'. The site advertises the library as free with an MIT engine."
+  }
+ ]
+}

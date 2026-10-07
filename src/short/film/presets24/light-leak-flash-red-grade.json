@@ -1,0 +1,27 @@
+{
+ "id": "light-leak-flash-red-grade",
+ "name": "Light-leak flash, hot red grade",
+ "summary": "Warm light leak washing over a high-contrast, saturated image with a dark vignette that pulses to red on beats.",
+ "use_when": "Hype beats and transitions into a power word on motivation or finance clips.",
+ "tags": [
+  "ai-caption-style",
+  "light-leak",
+  "flash",
+  "red",
+  "contrast",
+  "hype"
+ ],
+ "needs_cutout": false,
+ "kind": "effect",
+ "preset": {
+  "type": "light-leak",
+  "vignette": 0.45,
+  "grade": {
+   "contrast": 1.14,
+   "saturate": 1.2,
+   "brightness": 0.96,
+   "tint": "linear-gradient(180deg, rgba(255,20,40,.0), rgba(255,20,40,.4))",
+   "tintBlend": "overlay"
+  }
+ }
+}

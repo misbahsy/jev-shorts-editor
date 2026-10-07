@@ -1,0 +1,61 @@
+{
+ "id": "focus-behind-subject-solid",
+ "name": "Focus behind subject, solid",
+ "summary": "Giant solid word 'FOCUS' behind the person's head with a small JetBrains Mono label in front.",
+ "use_when": "Opening beat of a talking-head reel where one keyword should sit behind the speaker for depth.",
+ "tags": [
+  "behind-subject",
+  "giant-word",
+  "vertical",
+  "solid",
+  "mask-up"
+ ],
+ "needs_cutout": true,
+ "kind": "text",
+ "preset": {
+  "duration": 5,
+  "layers": [
+   {
+    "text": "FOCUS",
+    "font": {
+     "family": "Anton",
+     "weight": 400,
+     "italic": false
+    },
+    "size": 0.226,
+    "x": 0.5,
+    "y": 0.33,
+    "in": {
+     "type": "mask-up",
+     "at": 0.1,
+     "dur": 0.7,
+     "stagger": 0.08
+    },
+    "color": "#fff",
+    "tracking": -0.01,
+    "case": "upper",
+    "z": "behind-subject"
+   },
+   {
+    "text": "DEEP WORK / DAY 14",
+    "font": {
+     "family": "JetBrains Mono",
+     "weight": 500,
+     "italic": false
+    },
+    "size": 0.032,
+    "x": 0.5,
+    "y": 0.62,
+    "in": {
+     "type": "rise",
+     "at": 1,
+     "dur": 0.5
+    },
+    "z": "front",
+    "color": "#fff",
+    "shadow": true,
+    "tracking": 0.06
+   }
+  ]
+ }
+}

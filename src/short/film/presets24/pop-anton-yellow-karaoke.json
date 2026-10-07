@@ -1,0 +1,39 @@
+{
+ "id": "pop-anton-yellow-karaoke",
+ "name": "Pop word, yellow karaoke",
+ "summary": "Uppercase condensed bold, three words at a time, each word pops in and the spoken one turns yellow.",
+ "use_when": "The default for talking-head business and advice shorts.",
+ "tags": [
+  "bold",
+  "pop",
+  "karaoke",
+  "uppercase",
+  "talking-head"
+ ],
+ "needs_cutout": false,
+ "script": "You don't need more *time*, you need a better *system*",
+ "kind": "captions",
+ "preset": {
+  "font": {
+   "family": "Anton",
+   "weight": 400,
+   "italic": false
+  },
+  "size": 0.085,
+  "y": 0.62,
+  "wordsPerLine": 3,
+  "case": "upper",
+  "stroke": {
+   "width": 0.06,
+   "color": "#000"
+  },
+  "shadow": true,
+  "animIn": "pop",
+  "animDur": 0.16,
+  "ease": "back",
+  "karaoke": "color",
+  "activeColor": "#FFD400",
+  "color": "#fff",
+  "tracking": 0.01
+ }
+}

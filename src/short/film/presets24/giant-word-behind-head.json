@@ -1,0 +1,82 @@
+{
+ "id": "giant-word-behind-head",
+ "name": "Giant word behind head",
+ "summary": "Giant word tucked behind the speaker with a small boxed caption in front. Stages: \u201cSTOP. Your hook is the only thing that matters.\u201d",
+ "use_when": "The first frame needs to look different from the feed. Fits lines like \u201cFOCUS. Three rules for deep work.\u201d.",
+ "tags": [
+  "pattern-interrupt",
+  "behind"
+ ],
+ "needs_cutout": true,
+ "kind": "text",
+ "preset": {
+  "duration": 4,
+  "layers": [
+   {
+    "text": "STOP",
+    "font": {
+     "family": "Anton",
+     "weight": 400
+    },
+    "size": 0.265,
+    "x": 0.5,
+    "y": 0.4,
+    "align": "center",
+    "lineHeight": 0.95,
+    "width": 0.9,
+    "case": "upper",
+    "color": "#FFFFFF",
+    "z": "behind-subject",
+    "in": {
+     "type": "scale",
+     "at": 0,
+     "dur": 0.55,
+     "ease": "expo"
+    }
+   },
+   {
+    "text": "your hook is the only thing that matters",
+    "font": {
+     "family": "Inter",
+     "weight": 800
+    },
+    "size": 0.03,
+    "x": 0.5,
+    "y": 0.8,
+    "align": "center",
+    "lineHeight": 0.95,
+    "bg": "rgba(0,0,0,.72)",
+    "color": "#FFD400",
+    "in": {
+     "type": "pop",
+     "at": 0.6,
+     "dur": 0.3,
+     "ease": "back"
+    }
+   },
+   {
+    "text": "listen up",
+    "font": {
+     "family": "Inter",
+     "weight": 700
+    },
+    "size": 0.028,
+    "x": 0.5,
+    "y": 0.09,
+    "align": "center",
+    "lineHeight": 0.95,
+    "width": 0.9,
+    "case": "upper",
+    "tracking": 0.18,
+    "color": "#FFFFFF",
+    "shadow": true,
+    "in": {
+     "type": "fade",
+     "at": 0.3,
+     "dur": 0.3,
+     "ease": "out"
+    }
+   }
+  ]
+ }
+}

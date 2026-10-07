@@ -1,0 +1,36 @@
+{
+ "id": "pop-archivo-red-chip",
+ "name": "Pop word, red chip highlight",
+ "summary": "Archivo Black caps; the active word sits on a solid red chip.",
+ "use_when": "High-energy hooks where the active word has to be unmissable.",
+ "tags": [
+  "bold",
+  "pop",
+  "bg",
+  "chip"
+ ],
+ "needs_cutout": false,
+ "script": "Stop doing this *one thing* in your edits",
+ "kind": "captions",
+ "preset": {
+  "font": {
+   "family": "Archivo Black",
+   "weight": 400,
+   "italic": false
+  },
+  "size": 0.075,
+  "y": 0.64,
+  "wordsPerLine": 3,
+  "case": "upper",
+  "stroke": {
+   "width": 0.04,
+   "color": "#000"
+  },
+  "animIn": "pop",
+  "animDur": 0.15,
+  "ease": "back",
+  "karaoke": "bg",
+  "activeBg": "#E5322D",
+  "activeColor": "#fff"
+ }
+}

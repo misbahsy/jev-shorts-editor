@@ -1,0 +1,39 @@
+{
+ "id": "ed-inter-instrument",
+ "name": "Inter bold + Instrument italic",
+ "summary": "Heavy Inter lowercase with the key word in Instrument Serif italic, a size larger. Unspoken words dim.",
+ "use_when": "Founder, design and creator talking heads.",
+ "tags": [
+  "editorial",
+  "serif-italic",
+  "two-font"
+ ],
+ "needs_cutout": false,
+ "script": "Most people *overthink* the first step",
+ "kind": "captions",
+ "preset": {
+  "font": {
+   "family": "Inter",
+   "weight": 800,
+   "italic": false
+  },
+  "size": 0.07,
+  "y": 0.68,
+  "wordsPerLine": 3,
+  "case": "lower",
+  "tracking": -0.02,
+  "shadow": true,
+  "animIn": "rise",
+  "animDur": 0.18,
+  "ease": "out",
+  "karaoke": "dim",
+  "emphasisFont": {
+   "family": "Instrument Serif",
+   "weight": 400,
+   "italic": true,
+   "scale": 1.3,
+   "case": "none",
+   "color": "#FFE9C7"
+  }
+ }
+}

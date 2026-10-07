@@ -1,0 +1,78 @@
+{
+ "id": "giant-white-word-top-cropped-behind",
+ "name": "Giant top word cropped by the frame, outlined ghost copy",
+ "summary": "Huge extra-bold uppercase word across the top edge behind the speaker with an offset outlined copy beside it.",
+ "use_when": "Topic word at the start of a commentary or review clip, e.g. 'CAMERA' or 'INSIGHT'.",
+ "tags": [
+  "ai-caption-style",
+  "giant-word",
+  "behind-subject",
+  "uppercase",
+  "outline",
+  "top"
+ ],
+ "needs_cutout": true,
+ "kind": "text",
+ "preset": {
+  "duration": 5,
+  "layers": [
+   {
+    "text": "CAMERA",
+    "font": {
+     "family": "Poppins",
+     "weight": 800,
+     "italic": false
+    },
+    "size": 0.13,
+    "x": 0.5,
+    "y": 0.07,
+    "color": "#f4f4f4",
+    "case": "upper",
+    "tracking": -0.04,
+    "z": "behind-subject",
+    "in": {
+     "type": "drop",
+     "at": 0.1,
+     "dur": 0.6,
+     "ease": "expo"
+    },
+    "out": {
+     "type": "fade",
+     "at": 4.2,
+     "dur": 0.4
+    }
+   },
+   {
+    "text": "CAMERA",
+    "font": {
+     "family": "Poppins",
+     "weight": 800,
+     "italic": false
+    },
+    "size": 0.13,
+    "x": 0.62,
+    "y": 0.07,
+    "color": "transparent",
+    "stroke": {
+     "width": 0.03,
+     "color": "#f4f4f4"
+    },
+    "case": "upper",
+    "tracking": -0.04,
+    "z": "behind-subject",
+    "opacity": 0.6,
+    "in": {
+     "type": "drop",
+     "at": 0.3,
+     "dur": 0.6,
+     "ease": "expo"
+    },
+    "out": {
+     "type": "fade",
+     "at": 4.2,
+     "dur": 0.4
+    }
+   }
+  ]
+ }
+}

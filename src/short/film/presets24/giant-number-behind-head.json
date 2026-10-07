@@ -1,0 +1,82 @@
+{
+ "id": "giant-number-behind-head",
+ "name": "Giant number behind head",
+ "summary": "Giant word tucked behind the speaker with a small boxed caption in front. Stages: \u201c10X your focus with this one change.\u201d",
+ "use_when": "The first frame needs to look different from the feed. Fits lines like \u201c3 SECONDS decide everything.\u201d.",
+ "tags": [
+  "pattern-interrupt",
+  "behind"
+ ],
+ "needs_cutout": true,
+ "kind": "text",
+ "preset": {
+  "duration": 4,
+  "layers": [
+   {
+    "text": "10X",
+    "font": {
+     "family": "Bebas Neue",
+     "weight": 400
+    },
+    "size": 0.34,
+    "x": 0.5,
+    "y": 0.4,
+    "align": "center",
+    "lineHeight": 0.95,
+    "width": 0.9,
+    "case": "upper",
+    "color": "#FFFFFF",
+    "z": "behind-subject",
+    "in": {
+     "type": "scale",
+     "at": 0,
+     "dur": 0.55,
+     "ease": "expo"
+    }
+   },
+   {
+    "text": "your focus with one change",
+    "font": {
+     "family": "Space Grotesk",
+     "weight": 700
+    },
+    "size": 0.045,
+    "x": 0.5,
+    "y": 0.8,
+    "align": "center",
+    "lineHeight": 0.95,
+    "bg": "rgba(0,0,0,.72)",
+    "color": "#FF2D55",
+    "in": {
+     "type": "pop",
+     "at": 0.6,
+     "dur": 0.3,
+     "ease": "back"
+    }
+   },
+   {
+    "text": "free to try",
+    "font": {
+     "family": "Space Grotesk",
+     "weight": 700
+    },
+    "size": 0.028,
+    "x": 0.5,
+    "y": 0.09,
+    "align": "center",
+    "lineHeight": 0.95,
+    "width": 0.9,
+    "case": "upper",
+    "tracking": 0.18,
+    "color": "#FFFFFF",
+    "shadow": true,
+    "in": {
+     "type": "fade",
+     "at": 0.3,
+     "dur": 0.3,
+     "ease": "out"
+    }
+   }
+  ]
+ }
+}
