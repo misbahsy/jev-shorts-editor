@@ -28,12 +28,12 @@ interface Sentence {
   end: number;
   tokens: Token[];
 }
-interface ParakeetJson {
+export interface ParakeetJson {
   text: string;
   sentences: Sentence[];
 }
 
-function mergeSentenceTokens(tokens: Token[]): { text: string; start: number; end: number }[] {
+function mergeSentenceTokens(tokens: Token[], preciseEnds: boolean): { text: string; start: number; end: number }[] {
   const words: { text: string; start: number; end: number }[] = [];
   for (const tok of tokens) {
     const startsNewWord = tok.text.startsWith(" ") || words.length === 0;
@@ -42,7 +42,21 @@ function mergeSentenceTokens(tokens: Token[]): { text: string; start: number; en
     } else {
       const cur = words[words.length - 1];
       cur.text += tok.text;
-      cur.end = tok.end;
+      // parakeet places a trailing "." or "," just before the next word, so letting it stretch
+      // the word would swallow the whole pause. The clean stage asks for word ends without it.
+      const punctuationOnly = /^[\p{P}\p{S}]+$/u.test(tok.text);
+      if (!(preciseEnds && punctuationOnly)) cur.end = tok.end;
+    }
+  }
+  return words;
+}
+
+/** Flattens parakeet-mlx JSON into the global word list. */
+export function wordsFromParakeet(parsed: ParakeetJson, preciseEnds = false): Word[] {
+  const words: Word[] = [];
+  for (const sentence of parsed.sentences) {
+    for (const w of mergeSentenceTokens(sentence.tokens, preciseEnds)) {
+      words.push({ i: words.length, text: w.text, start: w.start, end: w.end });
     }
   }
   return words;
@@ -60,7 +74,7 @@ function resolveParakeet(): string {
   }
 }
 
-export async function transcribe(srcPath: string, workDir: string): Promise<Word[]> {
+export async function transcribe(srcPath: string, workDir: string, opts: { preciseEnds?: boolean } = {}): Promise<Word[]> {
   const txDir = join(workDir, "tx");
   mkdirSync(txDir, { recursive: true });
 
@@ -86,13 +100,7 @@ export async function transcribe(srcPath: string, workDir: string): Promise<Word
   const raw = readFileSync(jsonPath, "utf8");
   const parsed = JSON.parse(raw) as ParakeetJson;
 
-  const words: Word[] = [];
-  for (const sentence of parsed.sentences) {
-    const localWords = mergeSentenceTokens(sentence.tokens);
-    for (const w of localWords) {
-      words.push({ i: words.length, text: w.text, start: w.start, end: w.end });
-    }
-  }
+  const words = wordsFromParakeet(parsed, opts.preciseEnds ?? false);
 
   writeFileSync(join(workDir, "words.json"), JSON.stringify(words, null, 2));
   return words;

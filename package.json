@@ -10,7 +10,8 @@
   "scripts": {
     "short": "tsx src/short/auto.ts",
     "build:renderer": "tsx scripts/build-renderer.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/short/clean/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
