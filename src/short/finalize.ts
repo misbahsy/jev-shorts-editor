@@ -12,7 +12,7 @@ import type { Word, RawBeat, Perception, Geometry, Decisions, BeatDecision, Copy
 import type { BeatStructure } from "./structure";
 import { validateAndClamp, fallbackBigStatement } from "./copy";
 
-const SFX_MIN_GAP_SEC = 1.5;
+const SFX_MIN_GAP_SEC = 2.5;
 const SFX_MIN_CONF = 0.45;
 const FPS = 30;
 
@@ -25,6 +25,8 @@ export interface FinalizeInput {
   decisions: Decisions;
   copy: Copy;
   source: { path: string; durationSec: number; width: number; height: number; fps: number };
+  /** Per-shot sound picks (start time + the shot's own decision). Absent = one pick per beat. */
+  sfxShots?: { start: number; dec: BeatDecision }[];
 }
 
 function snapToFrame(t: number): number {
@@ -106,20 +108,21 @@ export function finalize(input: FinalizeInput): ShortPlan {
     };
   });
 
-  // 5. sfx placement: confidence>=0.45, not "none", spaced >=1.5s apart
+  // 5. sfx placement: confidence>=0.45, not "none", spaced >=2.5s apart. Candidates are the shot
+  //    starts when the shots are known (they carry the per-shot pick), else the beat starts.
   const SFX_TYPES = new Set(["whoosh", "pop", "ding", "riser", "impact"]);
   const sfx: ShortPlan["sfx"] = [];
   let lastSfxAt = -Infinity;
-  rawBeats.forEach((raw, i) => {
-    const dec = decisions.beats[i];
-    const choice = dec.sfx.choice;
-    if (choice === "none" || !SFX_TYPES.has(choice)) return;
-    if (dec.sfx.confidence < SFX_MIN_CONF) return;
-    const at = beats[i].start;
-    if (at - lastSfxAt < SFX_MIN_GAP_SEC) return;
+  const candidates = input.sfxShots ?? rawBeats.map((_, i) => ({ start: beats[i].start, dec: decisions.beats[i] }));
+  for (const c of candidates) {
+    const choice = c.dec.sfx.choice;
+    if (choice === "none" || !SFX_TYPES.has(choice)) continue;
+    if (c.dec.sfx.confidence < SFX_MIN_CONF) continue;
+    const at = snapToFrame(c.start);
+    if (at - lastSfxAt < SFX_MIN_GAP_SEC) continue;
     sfx.push({ type: choice as "whoosh" | "pop" | "ding" | "riser" | "impact", at, gainDb: -16 });
     lastSfxAt = at;
-  });
+  }
 
   const g = decisions.global;
   const plan: ShortPlan = {

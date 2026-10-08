@@ -45,7 +45,7 @@ const MIN_FULL_RUN_SEC = 1.5;
  *      content, not filler); see MIN_PROMOTABLE_CONTENT_WORDS.
  *   3. A run with no promotable beat and no more room to extend is left dead. That's the accepted
  *      remainder, not a bug: there is genuinely nothing safe to show. */
-export const MAX_DEAD_RUN_SEC = 4.0;
+export const MAX_DEAD_RUN_SEC = 6.0;
 
 function nextHighestExcluding(probabilities: Record<string, number>, exclude: Set<string>, current: string): string {
   const entries = Object.entries(probabilities).filter(([k]) => !exclude.has(k));
@@ -122,11 +122,22 @@ interface Working {
   transition: TransitionId;
 }
 
-export function assembleStructure(beats: RawBeat[], decisions: Decisions): BeatStructure[] {
+export interface StructureOptions {
+  /** Ids of beats that already show something without a card (a giant word behind the head). They
+   * count as covered for the dead-run budget and are pinned to the full layout. */
+  covered?: ReadonlySet<string>;
+  /** Give the first beat a card even when nothing asks for one (default true). Off when an opening
+   * hook owns the first seconds. */
+  forceFirstVisual?: boolean;
+}
+
+export function assembleStructure(beats: RawBeat[], decisions: Decisions, options: StructureOptions = {}): BeatStructure[] {
+  const covered = options.covered ?? new Set<string>();
+  const forceFirst = options.forceFirstVisual !== false;
   // 1. initial visual + template + layout assignment
   const working: Working[] = beats.map((raw, idx) => {
     const dec = decisions.beats[idx];
-    const hasVisual = dec.needsVisual >= 0.5 || idx === 0;
+    const hasVisual = dec.needsVisual >= 0.5 || (idx === 0 && forceFirst);
     const template = hasVisual ? dec.template.choice : null;
     const layout: "full" | "split" = template && !isUnderChin(template) ? "split" : "full";
     return { raw, dec, hasVisual, template, layout, textEffect: dec.textEffect.choice, transition: dec.transition.choice };
@@ -148,12 +159,12 @@ export function assembleStructure(beats: RawBeat[], decisions: Decisions): BeatS
     const out: { start: number; end: number; dur: number }[] = [];
     let i = 0;
     while (i < working.length) {
-      if (working[i].hasVisual) {
+      if (working[i].hasVisual || covered.has(working[i].raw.id)) {
         i++;
         continue;
       }
       let j = i;
-      while (j + 1 < working.length && !working[j + 1].hasVisual) j++;
+      while (j + 1 < working.length && !working[j + 1].hasVisual && !covered.has(working[j + 1].raw.id)) j++;
       out.push({ start: i, end: j, dur: working[j].raw.end - working[i].raw.start });
       i = j + 1;
     }
@@ -226,6 +237,8 @@ export function assembleStructure(beats: RawBeat[], decisions: Decisions): BeatS
       const run = rs[r];
       const minDur = run.layout === "split" ? MIN_SPLIT_RUN_SEC : MIN_FULL_RUN_SEC;
       if (run.dur >= minDur) continue;
+      // a giant word needs the full-bleed speaker: never flip the run that carries one
+      if (run.layout === "full" && working.slice(run.start, run.end + 1).some(w => covered.has(w.raw.id))) continue;
       if (rs.length === 1) break;
       const prev = rs[r - 1];
       const next = rs[r + 1];

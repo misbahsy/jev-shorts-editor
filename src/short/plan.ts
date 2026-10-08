@@ -16,9 +16,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { transcribe } from "./transcribe";
 import { perceive, type Perception } from "./perceive";
-import { decide, buildBeats } from "./decide";
+import { decide } from "./decide";
+import { splitShots } from "./shots";
+import { assembleShots, captionSectionsFrom, planOverlays } from "./rhythm";
 import { assembleStructure } from "./structure";
-import { holdMerge, extendOverDeadRuns } from "./hold";
+import { holdMerge } from "./hold";
 import { fillCopy } from "./copy";
 import { finalize } from "./finalize";
 import { computeGeometry } from "./geometry";
@@ -134,19 +136,24 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
   timings.decideMs = Date.now() - tDecide;
   writeFileSync(join(workDir, "decisions.json"), JSON.stringify(rawDecisions, null, 2));
 
-  // same template on adjacent beats = one idea -> hold one card across them
-  const held = holdMerge(buildBeats(words), rawDecisions);
-  // coverage-floor remedy #1: extend a card across a following dead run before structure.ts ever
-  // considers promoting a (possibly contentless) beat to cover it -- see hold.ts/structure.ts
-  const { beats, decisions } = extendOverDeadRuns(held.beats, held.decisions);
+  // shots (2 to 3 s) are the unit Jev decided on. The hook window is fixed first because the
+  // rhythm guardrails keep it clean, then the overlay guardrails run (giant words, card density),
+  // then shots that share a card are merged into beats.
+  const useHook = options.hook !== false;
+  const shots = splitShots(words);
+  const hookEnd = useHook ? pickHookEnd(words, shots.map(b => b.start), probe.durationSec) : 0;
+  const overlayPlan = planOverlays(shots, rawDecisions.beats, words, hookEnd, probe.durationSec, { allowGiants: useHook && perception.hasReliableFace !== false });
+  const shotDecisions = { ...rawDecisions, beats: overlayPlan.decisions };
+  const covered = new Set(Object.keys(overlayPlan.giants));
+  const held = holdMerge(shots, shotDecisions);
+  const beats = held.beats;
+  const decisions = held.decisions;
   writeFileSync(join(workDir, "beats.json"), JSON.stringify(beats, null, 2));
 
   const tStructure = Date.now();
-  let structure = assembleStructure(beats, decisions);
+  let structure = assembleStructure(beats, decisions, { covered, forceFirstVisual: !useHook });
   // the opening hook owns the first seconds: full framing there, no card under it
-  const useHook = options.hook !== false;
   const hookStyle = decisions.global.hookStyle?.choice ?? DEFAULT_HOOK_STYLE;
-  const hookEnd = pickHookEnd(words, beats.map(b => b.start), probe.durationSec);
   let visualFrom: Record<string, number> = {};
   if (useHook) {
     const applied = applyHookStructure(structure, beats, decisions.beats, hookEnd);
@@ -176,16 +183,33 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
     decisions,
     copy,
     source: { path: perceiveSrc, durationSec: probe.durationSec, width: probe.width, height: probe.height, fps: probe.fps },
+    sfxShots: shots.map((sh, i) => ({ start: sh.start, dec: overlayPlan.decisions[i] })).filter(c => c.start >= hookEnd),
   });
   if (clean) {
     plan.cuts = clean.cutPoints;
     plan.loudness = clean.loudness;
     plan.clean = clean.stats;
   }
+  if (useHook) for (const b of plan.beats) if (visualFrom[b.id] !== undefined && b.visual) b.visualFrom = visualFrom[b.id];
+
+  // per-shot camera, overlay, transition and caption style, after the rhythm guardrails
+  const totalSec = plan.beats[plan.beats.length - 1].end;
+  const assembled = assembleShots({
+    shots,
+    decs: overlayPlan.decisions,
+    beats: plan.beats,
+    overlay: overlayPlan,
+    hookEnd,
+    cuts: plan.cuts ?? [],
+    captionSections: captionSectionsFrom(decisions.global.sections, plan.style.captionStyle, totalSec),
+  });
+  plan.shots = assembled.shots;
+  plan.rhythm = assembled.rhythm;
+  plan.captionSections = captionSectionsFrom(decisions.global.sections, plan.style.captionStyle, totalSec);
+  for (const b of plan.beats) b.punchIn = plan.shots.some(s => s.beatId === b.id && s.camera === "punch");
   timings.finalizeMs = Date.now() - tFinalize;
 
   if (useHook) {
-    for (const b of plan.beats) if (visualFrom[b.id] !== undefined && b.visual) b.visualFrom = visualFrom[b.id];
     // the person cut-out needs the final layouts and cuts, so it runs after finalize
     const tCut = Date.now();
     const faceReliable = perception.hasReliableFace !== false;
