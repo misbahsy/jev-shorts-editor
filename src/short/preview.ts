@@ -32,7 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ShortPlan } from "./types";
-import { buildShots, fullCropRect, splitCropRect } from "./framing";
+import { MOVE_RECT_JS, buildShots, fullCropRect, splitCropRect } from "./framing";
 
 function parseArgs(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {};
@@ -105,7 +105,9 @@ export function buildPreview(planPath: string, filmPath: string, srcPath: string
     start: s.startSec,
     end: s.endSec,
     layout: s.layout,
-    crop: s.layout === "split" ? splitCropRect(plan, s.punchIn) : fullCropRect(plan, s.punchIn),
+    crop: s.layout === "split" ? splitCropRect(plan, s.zoom) : s.move ? plan.geometry.full.crop : fullCropRect(plan, s.zoom),
+    // a moving camera (push_in, drift): the crop above is its base rect, the view is moveRect(crop, move, p)
+    move: s.move,
   }));
 
   // Everything the client-side script needs that isn't already inside window.__PLAN
@@ -179,8 +181,15 @@ ${filmBody}
     else for (var i = 0; i < shots.length; i++) {
       if (t >= shots[i].start && t < shots[i].end) { idx = i; break; }
     }
-    return { layout: shots[idx].layout, crop: shots[idx].crop, key: idx };
+    var sh = shots[idx];
+    if (sh.move) {
+      var p = Math.min(1, Math.max(0, (t - sh.start) / Math.max(1 / 30, sh.end - sh.start)));
+      return { layout: sh.layout, crop: moveRect(sh.crop, sh.move, p), key: idx, moving: true };
+    }
+    return { layout: sh.layout, crop: sh.crop, key: idx, moving: false };
   }
+
+  ${"${MOVE_RECT_JS}"}
 
   var video = document.getElementById("src-video");
   var container = document.getElementById("video-container");
@@ -265,7 +274,7 @@ ${filmBody}
     if (typeof window.renderFrame === "function") window.renderFrame(t);
 
     var info = currentCropInfo(t);
-    if (info.key !== lastShot) {
+    if (info.moving || info.key !== lastShot) {
       applyCrop(info);
       lastShot = info.key;
     }
