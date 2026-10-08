@@ -1,0 +1,23 @@
+{
+  "skill_name": "jev-shorts-editor",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I recorded a 4 minute talking head about Claude editing video, it's at ~/Desktop/raw.mp4. Can you turn it into a short I can post on reels? I flubbed a few lines so cut those out.",
+      "expected_output": "A 1080x1920 MP4 under ~/Movies/jev-shorts with retakes removed, a verify report with no restated sentences or chopped words, and a short hand-off naming the output path, in/out length and the style chosen.",
+      "files": ["raw.mp4"]
+    },
+    {
+      "id": 2,
+      "prompt": "the short you made says 'Cloud' in the captions instead of Claude, and the hook card text is kinda boring. fix it",
+      "expected_output": "plan.json words corrected to 'Claude', the hook text rewritten, a re-render from --plan to a new file name without re-running Jev, and verify run on the new file.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "set up the jev shorts thing on my mac, I have no idea what I need",
+      "expected_output": "doctor.sh run, missing tools listed with fixes and installed only after consent, keys handled through keys.sh with no key values requested in chat or printed, doctor rerun until ready.",
+      "files": []
+    }
+  ]
+}

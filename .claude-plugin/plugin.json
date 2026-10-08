@@ -1,0 +1,9 @@
+{
+  "name": "jev-shorts-editor",
+  "version": "0.1.0",
+  "description": "Turn a talking-head clip into an edited 1080x1920 short on your Mac: retakes and pauses cut, captions, zooms, text cards and transitions chosen by Jev every 2 to 3 seconds.",
+  "author": { "name": "misbahsy" },
+  "homepage": "https://github.com/misbahsy/jev-shorts-editor",
+  "repository": "https://github.com/misbahsy/jev-shorts-editor",
+  "keywords": ["video", "shorts", "reels", "captions", "editing", "jev"]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "jev-shorts-editor",
+  "owner": { "name": "misbahsy" },
+  "plugins": [
+    {
+      "name": "jev-shorts-editor",
+      "source": "./",
+      "description": "Turn a talking-head clip into an edited 1080x1920 short on your Mac."
+    }
+  ]
+}
