@@ -169,42 +169,44 @@ Film.registerTemplate("flow_steps", {
     r.kcount.style.opacity = String(kp * 0.5);
     r.kcount.style.transform = "translateX(" + fx.lerp(18, 0, kp) + "px)";
 
-    const stagger = Math.min(0.11, 0.33 / Math.max(1, n - 1));
-    const rowDur = fx.clamp(dur * 0.3, 0.4, 0.6);
-
-    // ---- flow progress: the slow ambient that owns 30-70% and resolves by ~85% ----
-    const flowStart = Math.min(dur * 0.34, 1.05);
-    const flowSpan = Math.max(0.3, Math.min(dur * 0.5, 0.42 * n + 0.3));
-    const step = flowSpan / n;
+    // ---- the steps arrive one at a time across the hold, so the card keeps changing while the
+    //      speaker walks through them (slots stay reserved, so nothing reflows). Row i enters at
+    //      enter0 + i * reveal; each lights as it lands and stays lit. All pure functions of lt.
+    const rowDur = fx.clamp(dur * 0.22, 0.34, 0.5);
+    const enter0 = 0.14;
+    const revealSpan = Math.max(0.2, dur * 0.64 - enter0 - rowDur);
+    const reveal = n > 1 ? Math.min(0.85, revealSpan / (n - 1)) : 0;
+    const entryAt = (i) => enter0 + i * reveal;
 
     r.rows.forEach((row, i) => {
-      const p = fx.ease.outCubic(fx.prog(lt, 0.14 + i * stagger, rowDur));
+      const p = fx.ease.outCubic(fx.prog(lt, entryAt(i), rowDur));
       row.el.style.opacity = String(fx.clamp(p * 1.25, 0, 1));
-      row.el.style.transform = "translateX(" + fx.lerp(-48, 0, p) + "px)";
+      row.el.style.transform = "translateX(" + fx.lerp(-64, 0, p) + "px)";
 
-      const ip = fx.ease.outBack(fx.prog(lt, 0.2 + i * stagger, 0.46));
-      row.idx.style.transform = "scale(" + fx.lerp(0.6, 1, ip) + ")";
+      const ip = fx.ease.outBack(fx.prog(lt, entryAt(i) + 0.06, 0.46));
+      row.idx.style.transform = "scale(" + fx.lerp(0.5, 1, ip) + ")";
 
-      // each step lights in turn as the flow advances
-      const lp = fx.ease.outCubic(fx.prog(lt, flowStart + i * step, Math.min(0.34, step + 0.12)));
+      // a step lights as it lands
+      const lp = fx.ease.outCubic(fx.prog(lt, entryAt(i) + rowDur * 0.45, 0.34));
       row.el.classList.toggle("fcard-lit", lp > 0.12);
       row.idx.classList.toggle("fnum-accent", lp > 0.35);
-      row.idx.style.opacity = String(fx.lerp(0.34, 1, lp));
+      row.idx.style.opacity = String(fx.lerp(0.34, 1, lp) * fx.clamp(p * 1.25, 0, 1));
       row.label.style.opacity = String(fx.lerp(0.62, 1, lp) * fx.clamp(p * 1.25, 0, 1));
       row.dot.style.background = lp > 0.45 ? "var(--accent-grad)" : "var(--rule)";
       row.dot.style.boxShadow = lp > 0.45 ? "0 0 " + fx.lerp(0, 26, lp) + "px -4px var(--accent-glow)" : "none";
       row.dot.style.transform = "scale(" + fx.lerp(1, 1.35, lp) + ")";
     });
 
-    // the connector draws down between the two steps it joins
+    // the connector draws down between the two steps it joins, just before the next one lands
     r.conns.forEach((line, i) => {
-      const cp = fx.ease.outExpo(fx.prog(lt, flowStart + (i + 0.5) * step, Math.min(0.32, step)));
+      const cp = fx.ease.outExpo(fx.prog(lt, entryAt(i + 1) - 0.08, Math.min(0.34, reveal + 0.1)));
       line.style.transform = "scaleY(" + cp + ")";
+      line.style.opacity = String(fx.clamp(cp * 2, 0, 1));
     });
 
-    const mp = fx.ease.inOutCubic(fx.prog(lt, flowStart - 0.1, flowSpan + 0.2));
+    const mp = fx.ease.inOutCubic(fx.prog(lt, enter0, Math.max(0.3, (n - 1) * reveal + rowDur)));
     r.fill.style.width = (mp * 100).toFixed(2) + "%";
-    r.meter.style.opacity = String(fx.ease.outCubic(fx.prog(lt, 0.3, 0.4)));
+    r.meter.style.opacity = String(fx.ease.outCubic(fx.prog(lt, 0.2, 0.3)));
 
     const exitDur = 0.2;
     const exitStart = dur - exitDur;
