@@ -10,8 +10,12 @@ import { callGroq, extractJson, GROQ_TEXT_MODEL } from "../copy";
 import { getGroqKey } from "../groqEnv";
 import {
   RETAKE_WINDOW_WORDS,
+  TAKES_ALT_MAX_BETWEEN_WORDS,
+  TAKES_ALT_MIN_SHARED,
+  TAKES_ALT_WINDOW_SEC,
   TAKES_MAX_DROP_FRACTION,
   TAKES_PHRASE_GAP_SEC,
+  TAKES_RECOVERED_MAX_WORDS,
   TAKES_SLIP_MAX_WORDS,
   TAKES_SLIP_WITH_TWIN_MAX_WORDS,
   TAKES_TWIN_OVERLAP,
@@ -66,10 +70,20 @@ export function packPhrases(words: Word[]): Phrase[] {
   return out;
 }
 
-/** The transcript the model sees: one line per phrase, times, and an index after every word. */
-export function packTranscript(words: Word[], phrases: Phrase[] = packPhrases(words)): string {
+/** Marks a phrase made only of words the second listening pass found. */
+export const QUIET_MARK = "(quiet pickup)";
+
+/**
+ * The transcript the model sees: one line per phrase, times, and an index after every word.
+ * A phrase made only of recovered words is flagged, because it is usually a scrap, not a take.
+ */
+export function packTranscript(words: Word[], phrases: Phrase[] = packPhrases(words), recovered: ReadonlySet<number> = new Set()): string {
   return phrases
-    .map(p => `[${p.start.toFixed(1)}-${p.end.toFixed(1)}] ` + words.slice(p.from, p.to + 1).map(w => `${w.text}{${w.i}}`).join(" "))
+    .map(p => {
+      let quiet = recovered.size > 0;
+      for (let i = p.from; i <= p.to && quiet; i++) if (!recovered.has(words[i].i)) quiet = false;
+      return `[${p.start.toFixed(1)}-${p.end.toFixed(1)}] ${quiet ? QUIET_MARK + " " : ""}` + words.slice(p.from, p.to + 1).map(w => `${w.text}{${w.i}}`).join(" ");
+    })
     .join("\n");
 }
 
@@ -112,11 +126,68 @@ function contentTokens(words: Word[], from: number, to: number): string[] {
   return out;
 }
 
+const SENTENCE_END = /[.?!]["')\]]*$/;
+
 export interface GuardInput {
   words: Word[];
   proposals: Proposal[];
   /** Words Jev's confirmed retakes already remove. */
   alreadyRemoved: Set<number>;
+  /** Indices of words only the second listening pass found. */
+  recovered?: ReadonlySet<number>;
+}
+
+const MAX_PARTNER_WORDS = 20;
+
+/**
+ * Alternate takes: the model drops one of two neighbouring sentences that make the same claim in
+ * different words ("Claude just killed video editors with Opus 5.5." then "With Opus 5.5, you
+ * don't need video editors."). Believed only when the range is a whole sentence and a surviving
+ * sentence after it (nothing or one short sentence between, within TAKES_ALT_WINDOW_SEC) shares
+ * most of its content words. The later phrasing may go only when the earlier sentence is at least as full. A list, or a claim followed by its consequence, shares too little.
+ */
+function alternateTake(words: Word[], removed: ReadonlySet<number>, phraseOf: Map<number, Phrase>, from: number, to: number): string | undefined {
+  const last = words.length - 1;
+  const startsSentence = (i: number) => i === 0 || SENTENCE_END.test(words[i - 1].text) || phraseOf.get(i)?.from === i;
+  const endsSentence = (i: number) => i === last || SENTENCE_END.test(words[i].text) || phraseOf.get(i)?.to === i;
+  if (to - from + 1 < 3 || !startsSentence(from) || !endsSentence(to)) return undefined;
+  const mine = new Set(contentTokens(words, from, to));
+  if (mine.size === 0) return undefined;
+  const survivors = (a: number, b: number) => { const o: number[] = []; for (let i = a; i <= b; i++) if (!removed.has(i)) o.push(i); return o; };
+  const judge = (partner: number[], gapWords: number, gapSec: number, partnerMustBeFuller = false): boolean => {
+    if (partner.length === 0 || gapWords > TAKES_ALT_MAX_BETWEEN_WORDS || gapSec > TAKES_ALT_WINDOW_SEC) return false;
+    const theirs = new Set<string>();
+    for (const i of partner) for (const t of contentTokens(words, i, i)) theirs.add(t);
+    if (theirs.size === 0) return false;
+    // dropping the LATER phrasing is only safe when the sentence that stays is at least as full,
+    // so an abandoned stub is never kept in place of the finished take
+    if (partnerMustBeFuller && theirs.size < mine.size) return false;
+    const shared = [...mine].filter(t => theirs.has(t)).length;
+    return shared >= TAKES_ALT_MIN_SHARED && shared / Math.min(mine.size, theirs.size) > 0.5;
+  };
+  // the surviving sentence after the range
+  const after = survivors(to + 1, Math.min(last, to + RETAKE_WINDOW_WORDS));
+  if (after.length) {
+    const s = after[0];
+    const between = survivors(to + 1, s - 1).length;
+    const part: number[] = [];
+    for (const i of after) { if (i < s) continue; part.push(i); if (endsSentence(i) || part.length >= MAX_PARTNER_WORDS) break; }
+    if (judge(part, between, words[s].start - words[to].end)) return "alternate take of the sentence after it";
+  }
+  // the surviving sentence before the range (the later phrasing goes, the fuller earlier one stays)
+  const before = survivors(Math.max(0, from - RETAKE_WINDOW_WORDS), from - 1);
+  if (before.length) {
+    const e = before[before.length - 1];
+    const between = survivors(e + 1, from - 1).length;
+    const part: number[] = [];
+    for (let k = before.length - 1; k >= 0; k--) {
+      const i = before[k];
+      part.unshift(i);
+      if (startsSentence(i) || part.length >= MAX_PARTNER_WORDS) break;
+    }
+    if (judge(part, between, words[from].start - words[e].end, true)) return "alternate take of the sentence before it";
+  }
+  return undefined;
 }
 
 /**
@@ -130,6 +201,7 @@ export interface GuardInput {
  */
 export function guardProposals(input: GuardInput): { decisions: TakeDecision[]; drops: Map<number, string> } {
   const { words, proposals, alreadyRemoved } = input;
+  const recovered = input.recovered ?? new Set<number>();
   const phrases = packPhrases(words);
   const phraseOf = new Map<number, Phrase>();
   for (const p of phrases) for (let i = p.from; i <= p.to; i++) phraseOf.set(i, p);
@@ -182,6 +254,13 @@ export function guardProposals(input: GuardInput): { decisions: TakeDecision[]; 
     } else if (!hasTwin) {
       refuse = "not said again later, so it is the last take of its line";
     }
+    if (refuse) {
+      // two other ways a drop is believed without a twin: it is only speech the second listening
+      // pass found (a dangling scrap), or it is one of two back-to-back phrasings of one claim
+      const scrap = n <= TAKES_RECOVERED_MAX_WORDS && range.length === n && range.every(i => recovered.has(i));
+      if (scrap) refuse = undefined;
+      else if (alternateTake(words, removed, phraseOf, p.from, p.to)) refuse = undefined;
+    }
     if (!refuse) {
       const add = range.reduce((s, i) => s + words[i].end - words[i].start, 0);
       if (removedSpeech + add > cap) refuse = `would remove more than ${Math.round(TAKES_MAX_DROP_FRACTION * 100)}% of the speech`;
@@ -198,6 +277,8 @@ export function guardProposals(input: GuardInput): { decisions: TakeDecision[]; 
 export interface SelectTakesInput {
   words: Word[];
   alreadyRemoved: Set<number>;
+  /** Indices of words only the second listening pass found. */
+  recovered?: ReadonlySet<number>;
   call?: TakesCall;
   /** Skip the call entirely. */
   off?: boolean;
@@ -212,9 +293,9 @@ export async function selectTakes(input: SelectTakesInput): Promise<TakeSelectio
   const t0 = Date.now();
   try {
     const call: TakesCall = input.call ?? (prompt => callGroq(prompt, getGroqKey(), GROQ_TEXT_MODEL, 4096, undefined, 0));
-    const text = await call(buildTakesPrompt(packTranscript(words)));
+    const text = await call(buildTakesPrompt(packTranscript(words, undefined, input.recovered)));
     const proposals = parseProposals(text);
-    const { decisions, drops } = guardProposals({ words, proposals, alreadyRemoved });
+    const { decisions, drops } = guardProposals({ words, proposals, alreadyRemoved, recovered: input.recovered });
     const latencyMs = Date.now() - t0;
     const refused = decisions.filter(d => !d.accepted).length;
     log(`clean: take selection (${GROQ_TEXT_MODEL}): ${proposals.length} proposed, ${decisions.length - refused} accepted, ${refused} refused, ${latencyMs} ms`);

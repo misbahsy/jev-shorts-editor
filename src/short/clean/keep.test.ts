@@ -182,3 +182,50 @@ test("when speech runs straight into the removed word the cut falls at the valle
   assert.ok(c);
   assert.ok(c.start >= 0.5 - 1 / FPS - 1e-6 && c.start <= 0.5 + 1 / FPS + 1e-6, `valley cut at ${c.start}`);
 });
+
+/** The real "Opus 5.5" case: silence cuts used to land inside the word and Opus 5.5 was heard as Opus 5. */
+function fiveEnvelope(): { env: number[]; words: import("../transcribe").Word[] } {
+  const env = new Array(Math.round(24 * 100)).fill(-80);
+  const loud = (a: number, b: number, db: number) => { for (let i = Math.round(a * 100); i < Math.round(b * 100); i++) env[i] = db; };
+  loud(18.4, 18.78, -28);
+  loud(18.9, 19.09, -27);
+  loud(19.19, 19.32, -30);
+  loud(19.45, 19.8, -28);
+  loud(20.6, 21.0, -28);
+  const words = [
+    { i: 0, text: "Opus", start: 18.4, end: 18.72 },
+    { i: 1, text: "5.5.", start: 18.96, end: 19.68 },
+    { i: 2, text: "You", start: 20.55, end: 21.05 },
+  ];
+  return { env, words };
+}
+
+test("a silence cut never removes audio inside a long word", () => {
+  const { env, words } = fiveEnvelope();
+  const plan = planKeep({ words, removed: new Map(), fillerSounds: [], durationSec: 24, fps: FPS, opts: DEFAULT_CLEAN, envelope: env });
+  for (const c of plan.cuts) {
+    for (let i = Math.round(c.start * 100); i < Math.round(c.end * 100); i++) {
+      if (env[i] > -45) assert.fail(`${c.reason} cut ${c.start}-${c.end} removes sound at ${i / 100} s`);
+    }
+  }
+  // the pause after the word is still cut, so the fix did not just stop cutting
+  assert.ok(plan.cuts.some(c => c.reason === "silence" && c.start >= 19.8 && c.end <= 20.6));
+});
+
+test("the cut is pulled back from a soft syllable even when the edge detector does not reach it", () => {
+  // a 0.5 s hush inside a 1.6 s word is longer than the edge detector crosses; the planner still keeps the second half
+  const env = new Array(600).fill(-80);
+  for (let i = 100; i < 130; i++) env[i] = -28;
+  for (let i = 180; i < 215; i++) env[i] = -33;
+  for (let i = 400; i < 440; i++) env[i] = -28;
+  const words = [
+    { i: 0, text: "alpha", start: 0.9, end: 2.2 },
+    { i: 1, text: "beta", start: 3.9, end: 4.5 },
+  ];
+  const plan = planKeep({ words, removed: new Map(), fillerSounds: [], durationSec: 6, fps: FPS, opts: DEFAULT_CLEAN, envelope: env });
+  for (const c of plan.cuts) {
+    for (let i = Math.round(c.start * 100); i < Math.round(c.end * 100); i++) {
+      if (env[i] > -45) assert.fail(`${c.reason} cut ${c.start}-${c.end} removes sound at ${i / 100} s`);
+    }
+  }
+});

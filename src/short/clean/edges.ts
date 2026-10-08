@@ -29,6 +29,19 @@ export const OFFSET_FLOOR_DB = -52;
 export const OFFSET_CEIL_DB = -40;
 /** The audio has to stay under the threshold this long before a word counts as over. */
 export const EDGE_HOLD_SEC = 0.07;
+/**
+ * A long word ("five point five", "video editors") has soft stretches between its syllables.
+ * The walks above would take such a stretch for the end of the sound and leave the rest of the
+ * word outside the edges, where a silence cut can reach it. So a word whose transcribed span is
+ * at least INTERNAL_WORD_MIN_SEC long may take in a further voiced run of at least
+ * INTERNAL_RUN_MIN_SEC across a quiet stretch of at most INTERNAL_GAP_MAX_SEC, when that run
+ * lies in (or within INTERNAL_SLACK_SEC of) the word's own span and is closer to it than to the
+ * neighbouring word's. The run may never reach past the neighbour's own sound.
+ */
+export const INTERNAL_WORD_MIN_SEC = 0.45;
+export const INTERNAL_GAP_MAX_SEC = 0.3;
+export const INTERNAL_RUN_MIN_SEC = 0.03;
+export const INTERNAL_SLACK_SEC = 0.04;
 
 export interface Edge {
   /** Source seconds. */
@@ -104,6 +117,64 @@ export function quietRunBefore(env: number[], from: number, limit: number, thr: 
   return stop <= 0 && run > 0 ? run : null;
 }
 
+/** Seconds between a run [a, b) and a word's transcribed span; 0 when they overlap. */
+function spanDistance(a: number, b: number, w: Word): number {
+  return Math.max(0, w.start - b, a - w.end);
+}
+
+/**
+ * Pulls the onset back across a short quiet stretch to a voiced run that belongs to the word
+ * (see INTERNAL_WORD_MIN_SEC). `lo` is the frame the previous word's sound ends at.
+ */
+function extendOnset(env: number[], onset: number, lo: number, thr: number, hold: number, w: Word, prev: Word | null): number {
+  const maxGap = Math.round(INTERNAL_GAP_MAX_SEC / ENV_STEP_SEC);
+  const minRun = Math.round(INTERNAL_RUN_MIN_SEC / ENV_STEP_SEC);
+  let s = onset;
+  for (let guard = 0; guard < 6; guard++) {
+    let j = s - 1;
+    while (j >= lo && env[j] < thr) j--;
+    if (j < lo || s - 1 - j > maxGap) break;
+    // the voiced run ends at j; walk back to where it stops (a quiet hold, or the limit)
+    let r0 = j;
+    let quiet = 0;
+    for (let i = j; i >= lo; i--) {
+      if (env[i] >= thr) { r0 = i; quiet = 0; } else if (++quiet >= hold) break;
+    }
+    if (j - r0 + 1 < minRun) break;
+    const a = r0 * ENV_STEP_SEC;
+    const b = (j + 1) * ENV_STEP_SEC;
+    const own = spanDistance(a, b, w);
+    if (own > INTERNAL_SLACK_SEC || (prev && own > spanDistance(a, b, prev))) break;
+    s = r0;
+  }
+  return s;
+}
+
+/** The mirror image for the offset: returns the frame just after the word's last voiced run. */
+function extendOffset(env: number[], offset: number, hi: number, thr: number, hold: number, w: Word, next: Word | null): number {
+  const maxGap = Math.round(INTERNAL_GAP_MAX_SEC / ENV_STEP_SEC);
+  const minRun = Math.round(INTERNAL_RUN_MIN_SEC / ENV_STEP_SEC);
+  let s = offset;
+  for (let guard = 0; guard < 6; guard++) {
+    let j = s;
+    while (j < hi && env[j] < thr) j++;
+    if (j >= hi || j - s > maxGap) break;
+    let r1 = j;
+    let quiet = 0;
+    for (let i = j; i < hi; i++) {
+      if (env[i] >= thr) { r1 = i; quiet = 0; } else if (++quiet >= hold) break;
+    }
+    if (r1 - j + 1 < minRun) break;
+    const a = j * ENV_STEP_SEC;
+    const b = (r1 + 1) * ENV_STEP_SEC;
+    const own = spanDistance(a, b, w);
+    // a tie goes to the next word: its start is early, the end of this one is late
+    if (own > INTERNAL_SLACK_SEC || (next && own >= spanDistance(a, b, next))) break;
+    s = r1 + 1;
+  }
+  return s;
+}
+
 /**
  * Per-word sound edges. `env` is the 10 ms RMS envelope of the source, `durationSec` its
  * length. Words must be sorted by time. The list may contain words that will be removed:
@@ -144,6 +215,27 @@ export function wordEdges(env: number[], words: Word[], durationSec: number): Wo
     else if (k > 0) on = { t: argMin(env, backLimit, p) * ENV_STEP_SEC, quiet: false };
     else on = { t: 0, quiet: false };
     out.push({ peak: p * ENV_STEP_SEC, onset: on, offset: off });
+  }
+
+  // second pass: long words keep their own soft middles (onsets first, then offsets, each
+  // bounded by the neighbour's sound, so the two words cannot both claim the same run)
+  const isLong = (k: number) => words[k].end - words[k].start >= INTERNAL_WORD_MIN_SEC;
+  const offsetsBefore = out.map(e => e.offset.t);
+  for (let k = 0; k < n; k++) {
+    if (!isLong(k)) continue;
+    const thr = edgeThreshold(env[peaks[k]] ?? ONSET_FLOOR_DB, "onset");
+    const lo = k > 0 ? Math.round(offsetsBefore[k - 1] / ENV_STEP_SEC) : 0;
+    const from = Math.round(out[k].onset.t / ENV_STEP_SEC);
+    const f = extendOnset(env, from, lo, thr, hold, words[k], k > 0 ? words[k - 1] : null);
+    if (f < from) out[k].onset = { t: f * ENV_STEP_SEC, quiet: out[k].onset.quiet };
+  }
+  for (let k = 0; k < n; k++) {
+    if (!isLong(k)) continue;
+    const thr = edgeThreshold(env[peaks[k]] ?? ONSET_FLOOR_DB, "offset");
+    const hi = k < n - 1 ? Math.round(out[k + 1].onset.t / ENV_STEP_SEC) : endFrame;
+    const from = Math.round(out[k].offset.t / ENV_STEP_SEC);
+    const f = extendOffset(env, from, hi, thr, hold, words[k], k < n - 1 ? words[k + 1] : null);
+    if (f > from) out[k].offset = { t: f * ENV_STEP_SEC, quiet: out[k].offset.quiet };
   }
   return out;
 }

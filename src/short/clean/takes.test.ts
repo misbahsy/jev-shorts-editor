@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { guardProposals, packPhrases, packTranscript, parseProposals, selectTakes } from "./takes";
+import { guardProposals, packPhrases, packTranscript, parseProposals, QUIET_MARK, selectTakes } from "./takes";
+import { buildTakesPrompt } from "./takesPrompt";
 import { script } from "./testutil";
 
 // phrases: P0 "One" | P1 "first one is to ask Claude to mimic a video" | P2 redo ... separated by 0.6 s pauses
@@ -154,4 +155,147 @@ test("selectTakes falls back quietly when the call fails or the answer is not JS
   assert.equal(junk.mode, "fallback");
   const off = await selectTakes({ words: words(), alreadyRemoved: new Set(), off: true });
   assert.equal(off.mode, "off");
+});
+
+// ---- alternate takes: back-to-back phrasings of one claim ----
+const OPENER = "Claude just killed video editors. Claude just killed video editors with Opus 5.5. You don't need video editors. With Opus 5.5, you don't need video editors. You see this video, it's all edited by Claude.";
+// 0-4 | 5-12 | 13-17 | 18-25 | 26-...
+
+test("the opener: Jev took the first two lines, the model drops the earlier of the two that remain", () => {
+  const w = script(OPENER);
+  assert.equal(w[5].text, "Claude");
+  assert.equal(w[12].text, "5.5.");
+  assert.equal(w[18].text, "With");
+  assert.equal(w[25].text, "editors.");
+  const jev = new Set<number>([0, 1, 2, 3, 4, 13, 14, 15, 16, 17]);
+  const r = guardProposals({ words: w, alreadyRemoved: jev, proposals: [{ from: 5, to: 12, reason: "alternate phrasing of the claim" }] });
+  assert.equal(r.decisions[0].accepted, true, r.decisions[0].rejected);
+  assert.deepEqual([...r.drops.keys()].sort((a, b) => a - b), [5, 6, 7, 8, 9, 10, 11, 12]);
+});
+
+test("an earlier phrasing with few words in common by ratio, but most of the later sentence, goes through the alternate rule", () => {
+  // the twin rule alone refuses this (5 of 11 content words said again), the alternate rule believes it
+  const w = script("Claude just completely killed all video editors forever with Opus 5.5. With Opus 5.5, video editors are finished. You see this video, it is all edited by Claude and nobody touched a timeline at any point during the whole edit, which still amazes me every single time.");
+  const r = guardProposals({ words: w, alreadyRemoved: new Set(), proposals: [{ from: 0, to: 10, reason: "alternate phrasing" }] });
+  assert.equal(r.decisions[0].accepted, true, r.decisions[0].rejected);
+});
+
+test("the later phrasing may go only when the earlier sentence is at least as full", () => {
+  const tail = " You see this video, it is all edited by Claude and nobody touched a timeline at any point during the whole edit, which still amazes me every single time.";
+  // the earlier sentence is the fuller one, so the model may drop the later phrasing (the real opener case)
+  const fuller = script("Claude just completely killed all video editors forever with Opus 5.5. With Opus 5.5, video editors are finished." + tail);
+  const ok = guardProposals({ words: fuller, alreadyRemoved: new Set(), proposals: [{ from: 11, to: 17, reason: "alternate phrasing" }] });
+  assert.equal(ok.decisions[0].accepted, true, ok.decisions[0].rejected);
+  // the earlier sentence is a stub of the later one: the finished take stays
+  const stub = script("Opus 5.5, video editors. Claude just completely killed all video editors forever with Opus 5.5, so nobody needs them." + tail);
+  const no = guardProposals({ words: stub, alreadyRemoved: new Set(), proposals: [{ from: 4, to: 17, reason: "alternate phrasing" }] });
+  assert.equal(no.decisions[0].accepted, false);
+});
+
+test("the opener as the model proposed it: the later phrasing is dropped, the fuller earlier one stays", () => {
+  const w = script(OPENER);
+  const jev = new Set<number>([0, 1, 2, 3, 4, 13, 14, 15, 16, 17]);
+  const r = guardProposals({ words: w, alreadyRemoved: jev, proposals: [{ from: 18, to: 25, reason: "alternate phrasing" }] });
+  assert.equal(r.decisions[0].accepted, true, r.decisions[0].rejected);
+  assert.ok(r.drops.has(18) && !r.drops.has(5));
+});
+
+test("the opener: with both phrasings proposed, only one is dropped", () => {
+  const w = script(OPENER);
+  const jev = new Set<number>([0, 1, 2, 3, 4, 13, 14, 15, 16, 17]);
+  const r = guardProposals({
+    words: w,
+    alreadyRemoved: jev,
+    proposals: [
+      { from: 5, to: 12, reason: "alternate phrasing" },
+      { from: 18, to: 25, reason: "alternate phrasing" },
+    ],
+  });
+  assert.equal(r.decisions.filter(d => d.accepted).length, 1);
+  assert.ok(r.drops.has(18) && !r.drops.has(5), "later drops are judged first, so the later phrasing goes and the earlier one stays");
+});
+
+test("a claim followed by its consequence is not an alternate take", () => {
+  const w = script("Claude just killed video editors. You don't need video editors anymore. You see this video, it's all edited by Claude.");
+  // 0-4 headline, 5-9 consequence: they share 'video editors' only
+  const r = guardProposals({ words: w, alreadyRemoved: new Set(), proposals: [{ from: 0, to: 4, reason: "same claim" }] });
+  assert.equal(r.decisions[0].accepted, false);
+  assert.equal(r.drops.size, 0);
+});
+
+test("a sequential list is not an alternate take", () => {
+  const w = script("Pick the angle for every clip. Pick the music for every clip. Export it.");
+  const r = guardProposals({ words: w, alreadyRemoved: new Set(), proposals: [{ from: 0, to: 5, reason: "same line" }, { from: 6, to: 11, reason: "same line" }] });
+  // the first has no repeated content beyond 'pick' and 'clip'; the last-take rule keeps the final line
+  assert.equal(r.decisions.filter(d => d.accepted && d.from === 6).length, 0);
+});
+
+test("two similar sentences far apart, or with a long passage between, are left alone", () => {
+  const farApart = script("Claude just killed video editors with Opus 5.5. ~16 With Opus 5.5, you don't need video editors. Bye now.");
+  const a = guardProposals({ words: farApart, alreadyRemoved: new Set(), proposals: [{ from: 8, to: 14, reason: "alt" }] });
+  assert.equal(a.decisions[0].accepted, false);
+  const between = script("Claude just killed video editors with Opus 5.5. First we plan every scene carefully together before any recording starts today. With Opus 5.5, you don't need video editors. Bye now.");
+  const b = guardProposals({ words: between, alreadyRemoved: new Set(), proposals: [{ from: 18, to: 24, reason: "alt" }] });
+  assert.equal(b.decisions[0].accepted, false);
+});
+
+test("the cap still limits alternate takes", () => {
+  const lines = Array.from({ length: 6 }, (_, k) => `Number ${k} shows that Claude edits video editors with Opus 5.5.`).join(" ");
+  const w = script(lines);
+  const per = 11;
+  const proposals = Array.from({ length: 5 }, (_, k) => ({ from: k * per, to: k * per + per - 1, reason: "alt" }));
+  const r = guardProposals({ words: w, alreadyRemoved: new Set(), proposals });
+  assert.ok(r.drops.size <= Math.floor(w.length * 0.25), `${r.drops.size} of ${w.length}`);
+});
+
+test("the prompt tells the model about alternate takes and quiet pickups", () => {
+  const p = buildTakesPrompt("[0.0-1.0] a{0}");
+  assert.match(p, /SAME claim in different words/);
+  assert.match(p, /\(quiet pickup\)/);
+  assert.ok(QUIET_MARK.includes("quiet pickup"));
+});
+
+// ---- recovered speech ----
+// "... use a skill like video use." then a recovered dangling scrap, then "Second is to use a prompt."
+const RECOVER = "Or use a skill like video use. ~10 and then apply to your video. ~10 Second is to use a prompt that worked for others, and honestly it has saved me hours of tedious manual cutting across every single project this month.";
+const rw = () => script(RECOVER);
+
+test("a recovered scrap is dropped as one range even with no twin", () => {
+  const w = rw();
+  const from = w.findIndex(x => x.text === "and");
+  const to = from + 5;
+  assert.equal(w[to].text, "video.");
+  const rec = new Set<number>(Array.from({ length: 6 }, (_, k) => from + k));
+  const r = guardProposals({ words: w, alreadyRemoved: new Set(), recovered: rec, proposals: [{ from, to, reason: "dangling fragment" }] });
+  assert.equal(r.decisions[0].accepted, true, r.decisions[0].rejected);
+  assert.equal(r.drops.size, 6);
+  // the same range without the recovered flag is a unique, last-take-of-its-line drop: refused
+  const plain = guardProposals({ words: w, alreadyRemoved: new Set(), proposals: [{ from, to, reason: "dangling fragment" }] });
+  assert.equal(plain.decisions[0].accepted, false);
+  // and so is a range that only partly overlaps the recovered words
+  const partial = guardProposals({ words: w, alreadyRemoved: new Set(), recovered: new Set([from]), proposals: [{ from, to, reason: "x" }] });
+  assert.equal(partial.decisions[0].accepted, false);
+});
+
+test("a recovered drop longer than the scrap limit still needs a twin", () => {
+  const w = script(Array.from({ length: 14 }, (_, k) => `w${k}`).join(" ") + " ~1 end here");
+  const rec = new Set<number>(Array.from({ length: 14 }, (_, k) => k));
+  const r = guardProposals({ words: w, alreadyRemoved: new Set(), recovered: rec, proposals: [{ from: 0, to: 13, reason: "x" }] });
+  assert.equal(r.decisions[0].accepted, false);
+});
+
+test("selectTakes marks quiet-pickup phrases for the model and lets it drop them", async () => {
+  const w = rw();
+  const from = w.findIndex(x => x.text === "and");
+  const rec = new Set<number>(Array.from({ length: 6 }, (_, k) => from + k));
+  let seen = "";
+  const sel = await selectTakes({
+    words: w,
+    alreadyRemoved: new Set(),
+    recovered: rec,
+    call: async prompt => { seen = prompt; return `{"drops":[{"from":${from},"to":${from + 5},"reason":"dangling fragment"}]}`; },
+  });
+  assert.match(seen, new RegExp("\\(quiet pickup\\) and\\{" + from + "\\}"));
+  assert.doesNotMatch(seen, /\(quiet pickup\) Or/);
+  assert.equal(sel.drops.size, 6);
 });

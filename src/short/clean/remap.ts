@@ -28,11 +28,32 @@ function keepOf(w: { start: number; end: number }, keeps: Range[]): Range | unde
   return keeps.find(k => mid >= k.start && mid <= k.end);
 }
 
-/** The words that survive the cut, re-indexed, with times on the output clock (clamped to their keep). */
-export function remapWords(words: Word[], keeps: Range[]): Word[] {
+/** The keep range sharing the most time with the word, when that is at least `minSec`. */
+function mostOverlapping(w: { start: number; end: number }, keeps: Range[], minSec: number): Range | undefined {
+  let best: Range | undefined;
+  let bestOv = 0;
+  for (const k of keeps) {
+    const ov = Math.min(w.end, k.end) - Math.max(w.start, k.start);
+    if (ov > bestOv) { best = k; bestOv = ov; }
+  }
+  return bestOv >= minSec ? best : undefined;
+}
+
+/** A word that shares at least this much time with a keep range is heard there. */
+export const MIN_OVERLAP_SEC = 0.02;
+
+/**
+ * The words that survive the cut, re-indexed, with times on the output clock (clamped to their keep).
+ * When `dropped` is given (the indices the planner removed) a word survives unless it was dropped
+ * and overlaps a keep range at all: the planner keeps every word it did not remove, and parakeet's
+ * early starts and late ends must not decide that audible speech has no caption. Without it, the
+ * older rule applies: a word survives when its center lies in a keep range.
+ */
+export function remapWords(words: Word[], keeps: Range[], dropped?: ReadonlySet<number>): Word[] {
   const out: Word[] = [];
   for (const w of words) {
-    const k = keepOf(w, keeps);
+    if (dropped?.has(w.i)) continue;
+    const k = dropped ? mostOverlapping(w, keeps, MIN_OVERLAP_SEC) : keepOf(w, keeps);
     if (!k) continue;
     out.push({
       i: out.length,

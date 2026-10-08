@@ -4,6 +4,7 @@ import { DEFAULT_CLEAN } from "./constants";
 import { planKeep } from "./keep";
 import {
   findUntranscribedSpans,
+  indicesOf,
   mapBatchWords,
   mergeWords,
   planBatch,
@@ -130,4 +131,12 @@ test("lead-in and tail speech without words is protected too", () => {
   const plan = planKeep({ words: w, removed: new Map(), fillerSounds: [], durationSec: 9.5, fps: FPS, opts: DEFAULT_CLEAN, protect });
   assert.ok(plan.keeps[0].start === 0 && plan.keeps[0].end >= 2.0, "lead speech kept");
   assert.ok(plan.keeps[plan.keeps.length - 1].end >= 9.5 - 1e-6, "tail speech kept");
+});
+
+test("the indices of recovered words are found in the merged, renumbered list", () => {
+  const extra = [{ i: 0, text: "and", start: 3.2, end: 3.4 }, { i: 1, text: "then", start: 7.2, end: 7.5 }];
+  const merged = mergeWords(words, extra);
+  const idx = indicesOf(merged, extra);
+  assert.deepEqual([...idx].sort((a, b) => a - b), [3, 4]);
+  assert.deepEqual([...idx].map(i => merged[i].text).sort(), ["and", "then"]);
 });

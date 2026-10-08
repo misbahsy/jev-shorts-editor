@@ -72,3 +72,20 @@ test("a word whose timestamp pokes slightly past a cut edge stays, clamped to it
   assert.ok(Math.abs(out[1].end - 2) < 1e-9);
   assert.ok(out.every(w => w.end >= w.start));
 });
+
+test("with the planner's removed set, a word that only partly overlaps its keep still survives", () => {
+  // "Here" is stamped 55.36-55.76 but the keep starts at 55.667: the center rule lost it
+  const keeps = [{ start: 40, end: 50 }, { start: 55.667, end: 60 }];
+  const words = [
+    { i: 0, text: "Here", start: 55.36, end: 55.76 },
+    { i: 1, text: "are", start: 55.8, end: 56 },
+    { i: 2, text: "gone", start: 52, end: 52.4 }, // removed by the planner, inside a cut
+    { i: 3, text: "cutword", start: 50.0, end: 55.7 }, // removed and overlapping a keep: still dropped
+    { i: 4, text: "stray", start: 53, end: 53.2 }, // not removed but heard nowhere: nothing to caption
+  ];
+  assert.deepEqual(remapWords(words, keeps).map(w => w.text), ["are"], "the old center rule drops Here");
+  const out = remapWords(words, keeps, new Set([2, 3]));
+  assert.deepEqual(out.map(w => w.text), ["Here", "are"]);
+  assert.ok(Math.abs(out[0].start - 10) < 1e-9, "clamped to the start of its keep");
+  assert.ok(out.every(w => w.end >= w.start));
+});

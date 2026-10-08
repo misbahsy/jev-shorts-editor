@@ -65,3 +65,14 @@ export const TAKES_SLIP_MAX_WORDS = 2;
 export const TAKES_SLIP_WITH_TWIN_MAX_WORDS = 3;
 /** A longer drop needs this share of its content words said again later, within the retake window. */
 export const TAKES_TWIN_OVERLAP = 0.5;
+/**
+ * Speech that only the second listening pass found (quiet, between takes) is usually a scrap of a
+ * sentence. A recovered-only drop of this many words or fewer needs no later twin to be believed.
+ */
+export const TAKES_RECOVERED_MAX_WORDS = 12;
+/** Alternate takes: two claims this close in the source (seconds) can be rewordings of one line. */
+export const TAKES_ALT_WINDOW_SEC = 15;
+/** Alternate takes share at least this many content words. */
+export const TAKES_ALT_MIN_SHARED = 2;
+/** At most this many words of other speech may sit between two alternate takes. */
+export const TAKES_ALT_MAX_BETWEEN_WORDS = 8;

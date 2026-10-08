@@ -12,11 +12,15 @@
  */
 import type { Word } from "../transcribe";
 import { EDGE_MARGIN_SEC } from "./constants";
-import { wordEdges, type Edge } from "./edges";
+import { ENV_STEP_SEC, INTERNAL_WORD_MIN_SEC, wordEdges, type Edge } from "./edges";
 import type { Cut, CleanOptions, CutReason, Interval, Range } from "./types";
 
 /** Cuts shorter than this are not worth a join. */
 const MIN_CUT_SEC = 0.05;
+/** Audio at or above this level (dB) for VOICED_RUN_SEC in a row inside a long word is part of the word, never dead air. */
+export const VOICED_DB = -45;
+const VOICED_RUN_SEC = 0.03;
+
 /** A non-word sound must sit this far from the words around it, or it is a word's own tail. */
 const FILLER_CLEARANCE_SEC = 0.05;
 
@@ -31,6 +35,8 @@ export interface PlanInput {
   opts: CleanOptions;
   /** 10 ms RMS levels of the source audio. When given, cut edges follow the real sound, not word times. */
   envelope?: number[];
+  /** Level that counts as sound inside a long word when a silence cut is checked (default VOICED_DB). */
+  voicedDb?: number;
   /** Voiced spans without words that must stay in the output (with the breath around them). */
   protect?: Range[];
 }
@@ -104,6 +110,26 @@ function subtractProtected(cuts: Cut[], protect: Range[], opts: CleanOptions, fp
   return out;
 }
 
+/**
+ * Voiced runs (at least VOICED_RUN_SEC at or above `db`) of the envelope inside [from, to):
+ * [start, end) in seconds, in order.
+ */
+export function voicedRuns(env: number[], from: number, to: number, db: number): Range[] {
+  const out: Range[] = [];
+  const a = Math.max(0, Math.floor(from / ENV_STEP_SEC));
+  const b = Math.min(env.length, Math.ceil(to / ENV_STEP_SEC));
+  const need = Math.max(1, Math.round(VOICED_RUN_SEC / ENV_STEP_SEC));
+  let run = 0;
+  for (let i = a; i <= b; i++) {
+    if (i < b && env[i] >= db) run++;
+    else {
+      if (run >= need) out.push({ start: (i - run) * ENV_STEP_SEC, end: i * ENV_STEP_SEC });
+      run = 0;
+    }
+  }
+  return out;
+}
+
 export function planKeep(input: PlanInput): KeepPlan {
   const { words, removed, fillerSounds, durationSec, fps, opts, envelope } = input;
   const protect = input.protect ?? [];
@@ -168,6 +194,23 @@ export function planKeep(input: PlanInput): KeepPlan {
       const nearest = Math.round(end * fps) * frame;
       const maxEnd = bOn.quiet ? Math.max(end, bOn.t - EDGE_MARGIN_SEC) : end;
       E = nearest <= maxEnd + 1e-9 ? nearest : Math.floor(end * fps + 1e-6) * frame;
+    }
+    // A silence cut may never take audio from inside a long word's own span (a soft syllable
+    // between two loud ones is still the word). Words are only cut between, so pull the edges
+    // of the cut back from any voiced run that sits in the neighbouring word's transcribed span.
+    // Items (removed words, filler sounds) keep their own cut: the zones stop at them.
+    if (envelope) {
+      const voicedDb = input.voicedDb ?? VOICED_DB;
+      const first = items.length ? Math.min(...items.map(it => it.start)) : Infinity;
+      const last = items.length ? Math.max(...items.map(it => it.end)) : -Infinity;
+      if (A && A.end - A.start >= INTERNAL_WORD_MIN_SEC) {
+        const runs = voicedRuns(envelope, aOff.t, Math.min(A.end, first, E), voicedDb);
+        if (runs.length) S = Math.max(S, Math.ceil((runs[runs.length - 1].end + EDGE_MARGIN_SEC) * fps - 1e-6) * frame);
+      }
+      if (B && B.end - B.start >= INTERNAL_WORD_MIN_SEC) {
+        const runs = voicedRuns(envelope, Math.max(B.start, last, S), bOn.t, voicedDb);
+        if (runs.length) E = Math.min(E, Math.floor((runs[0].start - EDGE_MARGIN_SEC) * fps + 1e-6) * frame);
+      }
     }
     if (E - S < frame * 1.5) continue;
     // label the gap: removed words and sounds keep their own reason, the air around them is silence

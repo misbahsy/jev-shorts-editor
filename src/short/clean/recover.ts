@@ -127,6 +127,13 @@ export function mergeWords(words: Word[], extra: Word[]): Word[] {
     .map((w, i) => ({ ...w, i }));
 }
 
+/** Where the extra words ended up in the merged list. */
+export function indicesOf(merged: Word[], extra: Word[]): Set<number> {
+  const key = (w: Word) => `${w.start}|${w.end}|${w.text}`;
+  const keys = new Set(extra.map(key));
+  return new Set(merged.filter(w => keys.has(key(w))).map(w => w.i));
+}
+
 /**
  * Spans that are still without words, in the final word list, and must not be cut: voiced,
  * long enough that they cannot be a filler sound, and not sitting between two removed (retake)
@@ -162,6 +169,8 @@ export interface RecoverResult {
   spans: VoicedSpan[];
   /** Words the second pass added. */
   added: Word[];
+  /** Their indices in the merged list, so later stages can tell recovered speech from the rest. */
+  addedIndices: Set<number>;
   /** Spans that still have no word inside them after the merge, in the merged list's indices. */
   stillEmpty: VoicedSpan[];
 }
@@ -182,7 +191,7 @@ export async function recoverUntranscribed(args: {
   const { src, workDir, words, silences, durationSec, retranscribe } = args;
   const log = args.log ?? (() => {});
   const spans = findUntranscribedSpans(words, silences, durationSec);
-  if (spans.length === 0) return { words, spans, added: [], stillEmpty: [] };
+  if (spans.length === 0) return { words, spans, added: [], addedIndices: new Set(), stillEmpty: [] };
   const segs = planBatch(spans, durationSec);
   const dir = join(workDir, "recover");
   mkdirSync(dir, { recursive: true });
@@ -191,7 +200,8 @@ export async function recoverUntranscribed(args: {
   const heard = await retranscribe(wav, dir);
   const added = mapBatchWords(heard, segs, words);
   const merged = mergeWords(words, added);
+  const addedIndices = indicesOf(merged, added);
   const stillEmpty = findUntranscribedSpans(merged, silences, durationSec);
   log(`clean: ${spans.length} voiced spans had no words, re-transcribed in one batch, ${added.length} words recovered, ${stillEmpty.length} still empty`);
-  return { words: merged, spans, added, stillEmpty };
+  return { words: merged, spans, added, addedIndices, stillEmpty };
 }
