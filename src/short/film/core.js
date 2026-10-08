@@ -319,9 +319,7 @@
     });
     root.appendChild(captionsLayer);
     var captionRuntime = window.FilmCaptions.build(captionsLayer, plan);
-    // engine caption styles (24fps) are drawn by hook24.js above the hook layer instead
-    var engineCaps = !!(window.__FILM24 && window.__FILM24.caption);
-    if (engineCaps) captionsLayer.style.display = "none";
+    // engine caption styles (24fps) are drawn by hook24.js; captions.js goes dark while one is in force
 
     // ---- 24fps layers: opening hook (behind the speaker), engine captions, light leaks ----
     var hook24 = window.FilmHook24 ? window.FilmHook24.build(root, plan) : null;
@@ -407,7 +405,7 @@
         }
       }
 
-      if (!engineCaps) window.FilmCaptions.render(captionRuntime, t, active, plan);
+      window.FilmCaptions.render(captionRuntime, t, active, plan);
       window.FilmTransitions.render(transitionLayer, t, plan);
       var pending = hook24 ? window.FilmHook24.render(hook24, t, active, plan) : null;
 

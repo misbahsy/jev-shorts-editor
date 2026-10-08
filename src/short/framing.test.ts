@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildShots, cutTimes, fullCropRect, splitCropRect, moveRect, MOVE_RECT_JS, CUT_PUNCH_ZOOM, CLOSEUP_ZOOM, PUSH_ZOOM, type CameraMove } from "./framing";
+import { headTopInShot, buildShots, cutTimes, fullCropRect, splitCropRect, moveRect, MOVE_RECT_JS, CUT_PUNCH_ZOOM, CLOSEUP_ZOOM, PUSH_ZOOM, type CameraMove } from "./framing";
 import { buildAudioFilter, shotFilter, moveFilter } from "./render";
 import type { ShortPlan } from "./types";
 
@@ -196,4 +196,18 @@ test("plans without plan.shots still frame from beat.punchIn", () => {
   const [a, b] = buildShots(plan([{ start: 0, end: 4 }, { start: 4, end: 8, punchIn: true }]));
   assert.equal(a.camera, "base");
   assert.equal(b.camera, "punch");
+});
+
+test("headTopInShot: a close-up puts the hair lower on screen than the base framing", () => {
+  const p = plan([{ start: 0, end: 4 }]);
+  const base = buildShots(p)[0];
+  const close = { ...base, zoom: CLOSEUP_ZOOM, move: null };
+  const a = headTopInShot(p, { ...base, zoom: 1, move: null });
+  const b = headTopInShot(p, close);
+  assert.ok(a !== null && b !== null);
+  assert.ok(b! > a!, `closeup ${b} should sit lower than base ${a}`);
+  assert.ok(a! >= 0.04 && b! <= 0.5);
+  // no detected face, no answer
+  const noFace = { ...p, geometry: { ...p.geometry, full: { ...p.geometry.full, face: { x: 0, y: 0, w: 0, h: 0 } } } } as ShortPlan;
+  assert.equal(headTopInShot(noFace, base), null);
 });

@@ -209,6 +209,20 @@ export function fullCropRect(plan: ShortPlan, punchIn: boolean | number): Rect {
 }
 
 /**
+ * Top of the head (hair) as a fraction of the output height while `shot` is on screen, from the
+ * full layout's padded face box. A moving camera is measured halfway through its move. Null when
+ * no face was detected. Used to put a giant word just above the hair under any camera.
+ */
+export function headTopInShot(plan: ShortPlan, shot: Shot): number | null {
+  const f = plan.geometry.full.face;
+  const base = plan.geometry.full.crop;
+  if (!(f.w > 0 && f.h > 0) || base.h <= 0) return null;
+  const srcY = base.y + ((f.y - 0.25 * f.h) * base.h) / plan.output.height;
+  const view = shot.move ? moveRect(base, shot.move, 0.5) : fullCropRect(plan, shot.zoom);
+  return clamp((srcY - view.y) / view.h, 0.04, 0.5);
+}
+
+/**
  * Crop for the `split` layout, or null when geometry gave none (bare scale). Punched in, it keeps
  * the same horizontal center and the same top edge, so the headroom above the hair holds and the
  * face stays inside the frame.

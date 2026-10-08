@@ -261,6 +261,23 @@ test("captionSectionsFrom keeps the global style for the first section and cover
   assert.deepEqual(captionSectionsFrom(undefined, "typewriter_line", 20), [{ start: 0, end: 20, style: "typewriter_line" }]);
 });
 
+test("captionSectionsFrom merges neighbouring sections that chose the same style", () => {
+  const s = captionSectionsFrom(
+    [
+      { start: 0, end: 10, captionStyle: { choice: "karaoke_line" } },
+      { start: 10, end: 20, captionStyle: { choice: "word_pop" } },
+      { start: 20, end: 30, captionStyle: { choice: "single_word" } },
+      { start: 30, end: 40, captionStyle: { choice: "single_word" } },
+    ],
+    "word_pop",
+    40,
+  );
+  assert.deepEqual(s, [
+    { start: 0, end: 20, style: "word_pop" },
+    { start: 20, end: 40, style: "single_word" },
+  ]);
+});
+
 test("a clip where Jev picks no giant word still gets one per GIANT_TARGET_EVERY_SEC, best supported first", () => {
   const { shots, words } = fixture(12); // 30 s
   const decs = shots.map(() => dec({ overlay: "none" }));

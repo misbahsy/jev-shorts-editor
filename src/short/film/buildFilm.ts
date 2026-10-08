@@ -83,13 +83,45 @@ export function fontFaceCss(presets: unknown[], fontDir = FONT_DIR): string {
   return css.join("\n");
 }
 
-/** What window.__FILM24 carries: the resolved engine caption preset + words and the leak preset. */
-export function film24Config(plan: any): { caption: Record<string, any> | null; captionWords: unknown[] | null; leak: Record<string, any> | null } {
-  const caption = plan?.style?.captionStyle ? resolveCaptionPreset(plan.style.captionStyle) : null;
+/** The caption sections of a plan: the planned list, or one section spanning the clip. */
+export function planCaptionSections(plan: any): { start: number; end: number; style: string }[] {
+  const secs = plan?.captionSections;
+  if (Array.isArray(secs) && secs.length) return secs;
+  const style = plan?.style?.captionStyle;
+  return style ? [{ start: 0, end: plan?.source?.durationSec ?? 1e9, style }] : [];
+}
+
+export type CaptionTrack = {
+  style: string;
+  preset: Record<string, any>;
+  /** only the words spoken inside this style's sections, so the engine pages never straddle a switch */
+  words: unknown[];
+  ranges: [number, number][];
+};
+
+/** One engine caption track per engine style that the plan actually uses. */
+export function captionTracks(plan: any): CaptionTrack[] {
+  const byStyle = new Map<string, [number, number][]>();
+  for (const s of planCaptionSections(plan)) {
+    if (!resolveCaptionPreset(s.style as any)) continue;
+    const list = byStyle.get(s.style) ?? [];
+    list.push([s.start, s.end]);
+    byStyle.set(s.style, list);
+  }
+  const words: any[] = plan?.words ?? [];
+  const out: CaptionTrack[] = [];
+  for (const [style, ranges] of byStyle) {
+    const mine = words.filter(w => ranges.some(([a, b]) => w.start >= a - 1e-6 && w.start < b - 1e-6));
+    out.push({ style, preset: resolveCaptionPreset(style as any)!, words: captionWords(mine), ranges });
+  }
+  return out;
+}
+
+/** What window.__FILM24 carries: one engine track per engine caption style used, plus the leak preset. */
+export function film24Config(plan: any): { captions: CaptionTrack[]; leak: Record<string, any> | null } {
   const leaks: number[] = plan?.fx?.leaks ?? [];
   return {
-    caption,
-    captionWords: caption ? captionWords(plan.words ?? []) : null,
+    captions: captionTracks(plan),
     leak: leaks.length ? leakPreset() : null,
   };
 }
@@ -104,7 +136,8 @@ export function buildFilm(plan: unknown, outHtmlPath: string): void {
   // the 24fps engine (hook, engine captions, light leaks) with the fonts it needs embedded
   const cfg24 = film24Config(plan);
   const hookPreset = (plan as any)?.hook?.preset;
-  const css = fontFaceCss([hookPreset, cfg24.caption, cfg24.leak].filter(Boolean));
+  const giantPresets = ((plan as any)?.giants ?? []).map((g: any) => g.preset);
+  const css = fontFaceCss([hookPreset, ...giantPresets, ...cfg24.captions.map(c => c.preset), cfg24.leak].filter(Boolean));
   if (css) parts.push(`<style>${css}</style>`);
   parts.push("<script>");
   parts.push(inlineEngine());

@@ -13,7 +13,7 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { bestTemplateForLayout, type BeatStructure } from "./structure";
-import type { Beat, BeatDecision, CaptionStyleId, HookPlan, HookStyleId, RawBeat, Word } from "./types";
+import type { Beat, BeatDecision, CaptionStyleId, GiantPlan, HookPlan, HookStyleId, RawBeat, Word } from "./types";
 
 export const PRESET_DIR = resolve(import.meta.dirname, "film", "presets24");
 const FPS = 30;
@@ -371,7 +371,8 @@ export function buildHookPlan(args: {
 }): HookPlan {
   const presetId = HOOK_PRESET_BY_STYLE[args.style];
   const text = normalizeHookCopy(args.copy, args.opening);
-  let bound = bindHook(presetId, text, args.endSec);
+  // the hook stands alone: the giant word and the captions, no second line of text competing with them
+  let bound = bindHook(presetId, { word: text.word, line: "" }, args.endSec);
   const needs = hasBehindLayer(bound.preset);
   const cutout = args.cutout.ok && args.cutout.frames > 0;
   let fallbackReason: string | undefined;
@@ -389,8 +390,45 @@ export function buildHookPlan(args: {
     fgFrames: needs && cutout ? args.cutout.frames : 0,
     fgDir: "fg",
     word: text.word,
-    line: text.line,
+    line: "",
     preset: bound.preset,
     ...(fallbackReason ? { fallbackReason } : {}),
+  };
+}
+
+// ---- mid-video giant words ----
+
+export const GIANT_PRESET_ID = "giant-word-behind-head";
+
+/**
+ * A giant word behind the speaker for one shot, same look as the hook: the word scales in at the
+ * start of the shot and fades over the last 0.3 s. `headTopFrac` is the hair line under the shot's
+ * camera (a close-up puts the head lower and bigger than the base framing). Without a cut-out the
+ * word shrinks into the headroom in front, exactly like the hook's fallback.
+ */
+export function buildGiantPlan(args: {
+  shotId: string;
+  start: number;
+  end: number;
+  word: string;
+  cutout: { ok: boolean; frames: number; reason?: string };
+  fgDir: string;
+  headTopFrac: number;
+}): GiantPlan {
+  const dur = Math.max(0.5, args.end - args.start);
+  const word = args.word.replace(/[^\p{L}\p{N}$%?]/gu, "").slice(0, 14).toUpperCase();
+  let bound = bindHook(GIANT_PRESET_ID, { word, line: "" }, dur);
+  const cutout = args.cutout.ok && args.cutout.frames > 0;
+  bound = cutout ? placeBehindHead(bound, args.headTopFrac) : frontFallback(bound, args.headTopFrac + 0.03);
+  return {
+    shotId: args.shotId,
+    start: args.start,
+    end: args.end,
+    word,
+    fgDir: args.fgDir,
+    fgFrames: cutout ? args.cutout.frames : 0,
+    cutout,
+    preset: bound.preset,
+    presetId: GIANT_PRESET_ID,
   };
 }

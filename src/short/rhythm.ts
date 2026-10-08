@@ -526,5 +526,12 @@ export function captionSectionsFrom(
     end: i === sections.length - 1 ? Math.max(totalSec, s.end) : s.end,
     style: i === 0 ? globalStyle : s.captionStyle.choice,
   }));
-  return out;
+  // neighbours that landed on the same style are one section (no pointless seams)
+  const merged: typeof out = [];
+  for (const sec of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.style === sec.style) last.end = sec.end;
+    else merged.push({ ...sec });
+  }
+  return merged;
 }
