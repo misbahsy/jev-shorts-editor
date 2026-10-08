@@ -2,9 +2,104 @@
 
 Turn a talking-head video into a finished vertical short with one command.
 
-You give it a clip of someone talking to the camera, retakes and dead air included. It cleans the clip up first, then gives back a 1080x1920 MP4 with the speaker framed for vertical, animated captions, on-screen graphics timed to what is being said, transitions, and sound effects. There is no timeline to drag around. The edit decisions are made by [Jev](https://typesafe.ai), a fast classifier from TypeSafe, and the on-screen text is written by a small LLM on Groq.
+You give it a clip of someone talking to the camera, retakes and dead air included. It cleans the clip up first, then gives back a 1080x1920 MP4 with the speaker framed for vertical, animated captions, on-screen graphics timed to what is being said, transitions, and sound effects. There is no timeline to drag around. Every edit decision is a call to [Jev](https://typesafe.ai), a fast classifier from TypeSafe, made through the `/v1/decisions` route of a [LiteLLM](https://github.com/BerriAI/litellm) gateway or straight to TypeSafe. The on-screen text is written by a small LLM on Groq.
 
 On an Apple Silicon Mac, a 40 second clip takes about 9 seconds to plan and about 2 minutes to fully render.
+
+## Every edit is a decision: Jev through LiteLLM
+
+This project is a working example of one idea: an editor where every editing choice is a *decision*, not generated text.
+
+A decision call sends a `state` (what is known so far) and a set of typed questions. It gets back one answer per question, with a probability for every option. [Jev](https://typesafe.ai) from TypeSafe answers them. Jev is a classifier, not a chat model, so every answer is one of the options the code offered. There is nothing to parse, nothing to validate and no retry for malformed output. Calls take a few hundred milliseconds, and planning a whole edit costs about a quarter of a cent.
+
+[LiteLLM](https://github.com/BerriAI/litellm) carries those calls. Its proxy has a `POST /v1/decisions` route, so Jev sits behind the same gateway as your other models. The proxy holds the TypeSafe key and adds virtual keys, budgets, spend tracking and request logs. Set `LITELLM_BASE_URL` and every Jev call in the editor goes through the gateway; leave it unset and the calls go straight to TypeSafe. One function in `src/jevClient.ts` makes all of them and sends the same body either way.
+
+### What Jev decides
+
+| When | Question | Question type | Options |
+| --- | --- | --- | --- |
+| Cleaning | Is this repeat a real retake that should be cut? One question per candidate, all in one request | noul (a yes/no score) | |
+| Once per video | Style family | choice | 8 |
+| | Accent color | choice | 8 |
+| | Caption style | choice | 8 |
+| | Opening title look | choice | 5 |
+| | Speaker energy | score | |
+| | Show a progress bar? | noul | |
+| Once per section | Caption style for this section | choice | 8 |
+| Every 2 to 3 second shot | Camera (steady, punch-in, face close-up, push-in, drift) | choice | 5 |
+| | Overlay (none, card, keyword pill, giant word) | choice | 4 |
+| | Card template | choice | 18 |
+| | Text effect | choice | 8 |
+| | Transition into the shot | choice | 6 |
+| | Sound effect | choice | 6 |
+| | Which word to emphasize | choice | the shot's words |
+
+Code turns the answers into a plan. Rhythm rules make sure something visible changes at least every 3 seconds, the same camera never plays twice in a row, and cards are up for no more than about half the video. Each time a rule overrides Jev, the override is logged in `plan.json`. The only generated text in the video is the copy on the cards and the hook, which a small LLM on Groq writes.
+
+### One request
+
+Here is an abridged per-shot request. The text and probabilities are made up, but the shape is what the editor sends:
+
+```json
+POST /v1/decisions
+{
+  "model": "jev",
+  "state": {
+    "footage": "one speaker, seated, centered, looking at the camera",
+    "transcript": "the whole cleaned transcript",
+    "currentShot": 7,
+    "current": ">>> CURRENT SHOT 7: \"and it finished the refactor in four minutes\"",
+    "prev": "so I gave it the whole repo",
+    "next": "which used to take me a full day"
+  },
+  "questions": {
+    "camera": {
+      "type": "choice",
+      "instructions": "How should the camera treat the speaker during CURRENT SHOT, given PREV and NEXT?",
+      "criteria": {
+        "base": "Steady medium framing of the speaker...",
+        "punch": "A quick snap in... The line lands a key claim, a number, a punchline...",
+        "face_closeup": "A tight close-up on the speaker's face...",
+        "push_in": "A slow steady zoom toward the face across the whole shot...",
+        "drift": "A slow sideways glide with a slight zoom..."
+      }
+    },
+    "transition": { "type": "choice", "instructions": "Which transition (if any) should play on the cut INTO CURRENT SHOT, given PREV?", "criteria": { "...": "..." } },
+    "sfx": { "type": "choice", "instructions": "Which sound effect (if any) best punctuates the cut into CURRENT SHOT?", "criteria": { "...": "..." } }
+  }
+}
+```
+
+And the answer:
+
+```json
+{
+  "model": "jev",
+  "answers": {
+    "camera": { "type": "choice", "choice": "punch", "confidence": 0.68,
+                "probabilities": { "punch": 0.68, "push_in": 0.17, "base": 0.09, "face_closeup": 0.04, "drift": 0.02 } },
+    "transition": { "type": "choice", "choice": "whip_streak", "confidence": 0.52, "probabilities": { "...": 0 } },
+    "sfx": { "type": "choice", "choice": "whoosh", "confidence": 0.61, "probabilities": { "...": 0 } }
+  },
+  "usage": { "input_tokens": 2510, "output_tokens": 494 }
+}
+```
+
+The shot requests don't depend on each other, so all of them go out at once.
+
+### Numbers from a real run
+
+A 4 minute 31 second talking-head take with plenty of retakes became a 42 second short. Its plan was made twice: once through a LiteLLM proxy running on the same Mac, and once direct.
+
+| | Through LiteLLM `/v1/decisions` | Direct to TypeSafe |
+| --- | --- | --- |
+| Decision requests | 23: 1 for 26 retake candidates, 22 for the edit | 23 |
+| Wall time for the 22 edit requests | 0.51 s | 0.19 s |
+| Median request latency | 440 ms | 186 ms |
+| Jev cost for the edit | $0.0023 | $0.0023 |
+| Whole plan, including local transcription and cut-outs | 55 s | 49 s |
+
+Jev's time is under a second of planning either way. Most of the plan is spent on local transcription, the retake cut and the cut-out mattes.
 
 ## What you get
 
@@ -13,7 +108,8 @@ On an Apple Silicon Mac, a 40 second clip takes about 9 seconds to plan and abou
 - **Giant words behind you.** One big word sits behind your head, with you cut out in front of it, at the hook and a few times later.
 - **Consistent loudness.** The final mix is high-passed and normalized to about -14 LUFS with a true peak of -1 dBTP.
 - **Vertical reframing.** Faces are found with Apple Vision, so the speaker stays in frame when a wide shot becomes 9:16.
-- **Animated captions** in one of eight styles, and the style can change at section boundaries.
+- **Animated captions** that change style every 6 to 12 seconds. Jev scores the eight caption styles for each section, and a short video uses two to four of them, never the same one twice in a row.
+- **Cameras drawn as Jev picks them.** A punch-in is 1.28x and a face close-up 1.5x, on both the full and the split layout, and every zoom is capped so the face is never cropped. The renderer only adds a camera of its own at a jump cut inside a steady shot, where it punches in so the cut looks deliberate.
 - **Graphic cards** picked per phrase from 18 templates, such as stat callouts, checklists, quotes, versus panels and code terminals.
 - **One look per video.** Jev picks a style family and an accent color that fit the content, and the whole short uses them.
 - **Transitions and sound effects** placed on the beats that need them.
@@ -107,7 +203,7 @@ It transcribes the finished MP4 again and reports repeated lines, places where t
 
 ## Using a LiteLLM gateway
 
-By default the editor calls TypeSafe directly. If you already run a [LiteLLM](https://github.com/BerriAI/litellm) proxy for your keys, budgets and logs, you can send the Jev calls through its `/v1/decisions` route instead.
+Without a gateway the editor calls TypeSafe directly. To send every Jev call through LiteLLM's `/v1/decisions` route instead (see [Every edit is a decision](#every-edit-is-a-decision-jev-through-litellm) for why you might):
 
 1. Start LiteLLM with a model group for Jev. `litellm.config.example.yaml` in this repo is a minimal config:
 
@@ -229,4 +325,4 @@ The sound effects in `assets/sfx/` come from [HyperFrames](https://github.com/he
 
 ## License
 
-No license has been chosen yet. Until one is added, all rights are reserved.
+MIT. See `LICENSE`. The bundled sound effects keep their own Apache 2.0 license (see Credits).

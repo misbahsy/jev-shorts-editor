@@ -1,5 +1,6 @@
 {
   "name": "jev-shorts-editor",
+  "license": "MIT",
   "version": "0.1.0",
   "private": true,
   "description": "Turn a talking-head clip into an edited 1080x1920 short. Jev makes the editing decisions; a native WebKit renderer draws the graphics.",
