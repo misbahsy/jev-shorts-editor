@@ -121,6 +121,7 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
   // (one batch) and merge what comes back. Spans that stay empty are handled by the planner.
   let stillEmpty: Awaited<ReturnType<typeof recoverUntranscribed>>["stillEmpty"] = [];
   let recoveredWords = 0;
+  let recoveredIdx: ReadonlySet<number> = new Set();
   if (input.recover !== false) {
     const rec = await recoverUntranscribed({
       src: srcPath,
@@ -134,6 +135,7 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
     words = rec.words;
     stillEmpty = rec.stillEmpty;
     recoveredWords = rec.added.length;
+    recoveredIdx = rec.addedIndices;
   }
 
   // retakes: deterministic candidates, Jev confirms
@@ -151,6 +153,7 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
   const sel = await selectTakes({
     words,
     alreadyRemoved: jevRemoved,
+    recovered: recoveredIdx,
     call: input.selectTakes === false ? undefined : input.takes,
     log,
     ...(input.selectTakes === false ? { off: true } : {}),
