@@ -48,35 +48,48 @@
   function build(root, plan) {
     var cfg = window.__FILM24 || {};
     var F = window.Film24;
-    var rt = { hook: null, caps: null, leak: null, ready: Promise.resolve() };
+    var rt = { layers: [], caps: null, leak: null, ready: Promise.resolve() };
     if (!F) return rt;
     var waits = [];
 
-    // ---- opening hook ----
-    var hook = plan.hook;
-    if (hook && hook.preset) {
-      var hookRoot = fillRoot(root, 20);
+    // ---- opening hook and mid-video giant words ----
+    // Both are "text behind the speaker" layers: a window [start, end) in output time, an engine
+    // text preset that runs on window-local time, and (with a cut-out) person frames fgDir/%05d.png
+    // indexed round((t - start) * 30).
+    var layers = [];
+    function addLayer(spec, z, start, end) {
+      if (!spec || !spec.preset) return;
+      var layerRoot = fillRoot(root, z);
       var media = {};
       var img = null;
-      if (hook.cutout && hook.fgFrames > 0) {
+      if (spec.cutout && spec.fgFrames > 0) {
         img = el(
           "img",
           { position: "absolute", left: "0", top: "0", width: "1080px", height: "1920px", pointerEvents: "none" },
-          hookRoot
+          layerRoot
         );
         media.fg = img;
       }
-      var m = F.mount(hookRoot, { kind: "text", preset: hook.preset, media: media });
+      var m = F.mount(layerRoot, { kind: "text", preset: spec.preset, media: media });
       waits.push(m.ready);
-      rt.hook = { root: hookRoot, img: img, mount: m, hook: hook, lastIdx: -1, cache: {} };
+      layerRoot.style.display = "none";
+      layers.push({ root: layerRoot, img: img, mount: m, spec: spec, start: start, end: end, lastIdx: -1, cache: {} });
     }
+    if (plan.hook) addLayer(plan.hook, 20, 0, plan.hook.endSec);
+    var giants = plan.giants || [];
+    for (var gi = 0; gi < giants.length; gi++) addLayer(giants[gi], 21, giants[gi].start, giants[gi].end);
+    rt.layers = layers;
 
-    // ---- engine captions ----
-    if (cfg.caption && cfg.captionWords) {
+    // ---- engine captions: one mount per engine style, shown only inside its own sections ----
+    var tracks = cfg.captions || [];
+    rt.caps = [];
+    for (var ti = 0; ti < tracks.length; ti++) {
+      var tr = tracks[ti];
       var capRoot = fillRoot(root, 30);
-      var cm = F.mount(capRoot, { kind: "captions", preset: cfg.caption, script: cfg.captionWords });
+      capRoot.style.display = "none";
+      var cm = F.mount(capRoot, { kind: "captions", preset: tr.preset, script: tr.words });
       waits.push(cm.ready);
-      rt.caps = { root: capRoot, mount: cm, y: typeof cfg.caption.y === "number" ? cfg.caption.y : 0.72 };
+      rt.caps.push({ root: capRoot, mount: cm, ranges: tr.ranges, y: typeof tr.preset.y === "number" ? tr.preset.y : 0.72 });
     }
 
     // ---- light leaks ----
@@ -94,41 +107,45 @@
     return rt;
   }
 
-  function preload(h, idx) {
+  function preload(L, idx) {
     for (var k = 1; k <= 4; k++) {
       var j = idx + k;
-      if (j >= h.hook.fgFrames || h.cache[j]) continue;
+      if (j >= L.spec.fgFrames || L.cache[j]) continue;
       var im = new Image();
-      im.src = h.hook.fgDir + "/" + pad5(j) + ".png";
-      h.cache[j] = im;
+      im.src = L.spec.fgDir + "/" + pad5(j) + ".png";
+      L.cache[j] = im;
     }
   }
 
   // Returns a Promise only when an fg frame has to be decoded before the frame can be captured.
   function render(rt, t, active, plan) {
     var pending = null;
-    var h = rt.hook;
-    if (h) {
-      var on = t < h.hook.endSec;
-      h.root.style.display = on ? "block" : "none";
-      if (on) {
-        if (h.img) {
-          var idx = Math.max(0, Math.min(h.hook.fgFrames - 1, Math.round(t * 30)));
-          if (idx !== h.lastIdx) {
-            h.lastIdx = idx;
-            var src = h.hook.fgDir + "/" + pad5(idx) + ".png";
-            h.img.src = src;
-            pending = h.img.decode ? h.img.decode().catch(function () {}) : null;
-            preload(h, idx);
-          }
+    for (var li = 0; li < rt.layers.length; li++) {
+      var L = rt.layers[li];
+      var on = t >= L.start - 1e-6 && t < L.end - 1e-6;
+      L.root.style.display = on ? "block" : "none";
+      if (!on) continue;
+      if (L.img) {
+        var idx = Math.max(0, Math.min(L.spec.fgFrames - 1, Math.round((t - L.start) * 30)));
+        if (idx !== L.lastIdx) {
+          L.lastIdx = idx;
+          L.img.src = L.spec.fgDir + "/" + pad5(idx) + ".png";
+          if (L.img.decode) pending = L.img.decode().catch(function () {});
+          preload(L, idx);
         }
-        h.mount.render(t);
       }
+      L.mount.render(t - L.start);
     }
-    var c = rt.caps;
-    if (c) {
-      var layout = active ? active.layout : "full";
-      var g = plan.geometry[layout];
+    var layout = active ? active.layout : "full";
+    var g = plan.geometry[layout];
+    for (var ci = 0; ci < rt.caps.length; ci++) {
+      var c = rt.caps[ci];
+      var inRange = false;
+      for (var ri = 0; ri < c.ranges.length; ri++) {
+        if (t >= c.ranges[ri][0] - 1e-6 && t < c.ranges[ri][1] - 1e-6) { inRange = true; break; }
+      }
+      c.root.style.display = inRange ? "block" : "none";
+      if (!inRange) continue;
       var shift = Math.round(g.captionY - c.y * 1920);
       c.root.style.transform = "translateY(" + shift + "px)";
       c.mount.render(t);

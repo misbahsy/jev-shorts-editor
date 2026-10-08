@@ -45,6 +45,12 @@ export type TextEffectId =
   | "scale_punch"
   | "mask_reveal";
 
+/** How the camera treats the speaker for one shot (framing.ts cameraRect turns each into a crop). */
+export type CameraId = "base" | "punch" | "face_closeup" | "push_in" | "drift";
+
+/** What sits on top of the speaker during one shot. */
+export type OverlayId = "none" | "card" | "keyword_pill" | "giant_word";
+
 export type TransitionId = "hard_cut" | "flash" | "whip_streak" | "glass_wipe" | "zoom_blur" | "glitch_slice";
 
 export type TemplateId =
@@ -154,8 +160,19 @@ export interface GlobalDecisions {
   captionStyle: { choice: CaptionStyleId; probabilities: Record<string, number>; confidence: number };
   energy: { score: number; probabilities: Record<string, number>; confidence: number };
   progressBar: { noul: number };
+  /** ADDITIVE: one caption-style answer per section (about 14 s of speech), asked with all 8 styles. */
+  sections?: SectionDecision[];
   /** ADDITIVE: opening-hook look (absent in decisions made before the hook stage existed). */
   hookStyle?: { choice: HookStyleId; probabilities: Record<string, number>; confidence: number };
+}
+
+export interface SectionDecision {
+  /** Shot ids [firstShot, lastShot] this section covers (inclusive). */
+  firstShot: string;
+  lastShot: string;
+  start: number;
+  end: number;
+  captionStyle: { choice: CaptionStyleId; probabilities: Record<string, number>; confidence: number };
 }
 
 export interface BeatDecision {
@@ -164,7 +181,11 @@ export interface BeatDecision {
   template: { choice: TemplateId; probabilities: Record<string, number>; confidence: number };
   textEffect: { choice: TextEffectId; probabilities: Record<string, number>; confidence: number };
   transition: { choice: TransitionId; probabilities: Record<string, number>; confidence: number };
-  punchIn: number; // noul
+  /** noul. With shots this is P(camera = punch), kept so older consumers still read a number. */
+  punchIn: number;
+  /** ADDITIVE: the per-shot menus. Absent in decisions made before shots existed. */
+  overlay?: { choice: OverlayId; probabilities: Record<string, number>; confidence: number };
+  camera?: { choice: CameraId; probabilities: Record<string, number>; confidence: number };
   sfx: { choice: string; probabilities: Record<string, number>; confidence: number };
   emphasis: { choice: string | null; probabilities: Record<string, number>; confidence: number } | null;
 }
@@ -251,6 +272,54 @@ export interface HookPlan {
   fallbackReason?: string;
 }
 
+/** ADDITIVE: one 2 to 3 second shot, the unit the camera, overlay and giant-word choices are made on. */
+export interface ShotPlan {
+  id: string;
+  start: number;
+  end: number;
+  text: string;
+  wordRange: [number, number];
+  /** Id of the (possibly merged) beat that owns this shot's card, if any. */
+  beatId: string;
+  layout: "full" | "split";
+  camera: CameraId;
+  /** What Jev picked before the rhythm guardrails ran (equal to the final value when nothing overrode it). */
+  jev: { camera: CameraId; overlay: OverlayId };
+  overlay: OverlayId;
+  /** Behind-the-speaker giant word, when overlay is giant_word. */
+  giantWord?: string;
+  /** The transition played at the start of this shot (the first shot of a beat carries the beat's own). */
+  transitionIn: TransitionId;
+  /** Caption style while this shot is on screen (changes only at section boundaries). */
+  captionStyle: CaptionStyleId;
+  /** Plain-English reasons a guardrail changed Jev's pick, in the order they fired. */
+  overrides: string[];
+}
+
+/** ADDITIVE: a mid-video giant word behind the speaker (the hook is separate, in HookPlan). */
+export interface GiantPlan {
+  shotId: string;
+  start: number;
+  end: number;
+  word: string;
+  /** Frames of the person cut-out for this window: fg/g<index>/00000.png ... beside film.html. */
+  fgDir: string;
+  fgFrames: number;
+  /** Frame index in fgDir = round((t - start) * fps). */
+  cutout: boolean;
+  /** The engine text preset with the word bound in. */
+  preset: Record<string, unknown>;
+  presetId: string;
+}
+
+export interface RhythmReport {
+  /** Longest stretch (seconds) with no visible change after the guardrails ran. */
+  maxGapSec: number;
+  cardCoverage: number;
+  /** Every override as {shotId, rule, from, to}, also folded into each shot's `overrides`. */
+  overrides: { shotId: string; rule: string; from: string; to: string }[];
+}
+
 export interface ShortPlan {
   source: { path: string; durationSec: number; width: number; height: number; fps: number };
   output: { width: 1080; height: 1920; fps: 30 };
@@ -280,4 +349,12 @@ export interface ShortPlan {
   hook?: HookPlan;
   /** ADDITIVE: overlay-only effects. `leaks` = OUTPUT times of warm light-leak flashes at section changes. */
   fx?: { leaks: number[] };
+  /** ADDITIVE: the shot list with camera and overlay per shot (absent = one shot per beat, old plans). */
+  shots?: ShotPlan[];
+  /** ADDITIVE: mid-video behind-the-speaker giant words. */
+  giants?: GiantPlan[];
+  /** ADDITIVE: what the rhythm guardrails changed. */
+  rhythm?: RhythmReport;
+  /** ADDITIVE: caption style per section, changing only at section boundaries. */
+  captionSections?: { start: number; end: number; style: CaptionStyleId }[];
 }

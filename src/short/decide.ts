@@ -1,7 +1,11 @@
 /**
  * Beat construction (from words, since that's all this function receives —
  * sentence boundaries are re-derived from trailing sentence punctuation) +
- * the Jev fan-out: one global request, one request per beat.
+ * the Jev fan-out: one global request, one request per SHOT (a 2 to 3 second run of words from
+ * shots.ts), and one caption-style request per section of the video.
+ *
+ * Every per-shot request is independent and all of them go out at once, so the wall time of the
+ * whole stage is one request's latency (about 0.2 s) however many shots there are.
  */
 import { getJevTarget } from "../env";
 import { callSystemOne, type Question, type Answer, type ChoiceAnswer, type ScoreAnswer, type NoulAnswer } from "../jevClient";
@@ -14,9 +18,16 @@ import {
   TEXT_EFFECT_MENU,
   TRANSITION_MENU,
   SFX_MENU,
+  CAMERA_MENU,
+  OVERLAY_MENU,
   templateChoiceCriteria,
 } from "./menus";
-import type { Word, Perception, GlobalDecisions, BeatDecision, Decisions, JevStats, RawBeat } from "./types";
+import { splitShots } from "./shots";
+import type { Word, Perception, GlobalDecisions, BeatDecision, Decisions, JevStats, RawBeat, SectionDecision, TemplateId } from "./types";
+
+/** Roughly how long one caption-style section runs. Boundaries land on a shot that ends a sentence. */
+export const SECTION_TARGET_SEC = 13;
+export const SECTION_MAX_SEC = 19;
 
 const MIN_BEAT_SEC = 1.2;
 const MAX_BEAT_SEC = 5.0;
@@ -125,6 +136,32 @@ export function buildBeats(words: Word[]): RawBeat[] {
   return beats;
 }
 
+/**
+ * Groups shots into sections of about SECTION_TARGET_SEC, ending each on a shot whose last word
+ * ends a sentence (or at SECTION_MAX_SEC regardless). A tail shorter than half a target is folded
+ * into the section before it. Pure.
+ */
+export function buildSections(shots: RawBeat[], words: Word[]): { first: number; last: number; start: number; end: number }[] {
+  const out: { first: number; last: number; start: number; end: number }[] = [];
+  let first = 0;
+  for (let i = 0; i < shots.length; i++) {
+    const dur = shots[i].end - shots[first].start;
+    const sentenceEnd = endsSentence(words[shots[i].wordRange[1]].text);
+    if (i === shots.length - 1 || (dur >= SECTION_TARGET_SEC && sentenceEnd) || dur >= SECTION_MAX_SEC) {
+      out.push({ first, last: i, start: shots[first].start, end: shots[i].end });
+      first = i + 1;
+    }
+  }
+  if (out.length > 1) {
+    const tail = out[out.length - 1];
+    if (tail.end - tail.start < SECTION_TARGET_SEC / 2) {
+      const prev = out[out.length - 2];
+      out.splice(out.length - 2, 2, { first: prev.first, last: tail.last, start: prev.start, end: tail.end });
+    }
+  }
+  return out;
+}
+
 function footageContext(perception: Perception): string {
   return `${perception.description}\nOUTPUT: vertical 9:16 short for TikTok/Reels; two layouts: speaker full-screen, or split with graphics panel on top and speaker below.`;
 }
@@ -176,7 +213,7 @@ const COST_PER_1M_INPUT = 0.042;
 
 export async function decide(words: Word[], perception: Perception, meta: { title: string }): Promise<Decisions> {
   const target = getJevTarget();
-  const beats = buildBeats(words);
+  const beats = splitShots(words);
   const footage = footageContext(perception);
   const transcript = numberedTranscript(beats);
 
@@ -205,6 +242,24 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
 
   const globalPromise = callSystemOne(target, globalState, globalQuestions);
 
+  // ---- per-section caption style (section 0 keeps the global answer, which also styles the hook) ----
+  const sections = buildSections(beats, words);
+  const sectionPromises = sections.map((sec, k) => {
+    if (k === 0) return null;
+    const text = beats.slice(sec.first, sec.last + 1).map(b => b.text).join(" ");
+    return callSystemOne(
+      target,
+      { footage, title: meta.title, transcript, current: `>>> CURRENT SECTION (${k + 1} of ${sections.length}): "${text}"` },
+      {
+        caption_style: {
+          type: "choice",
+          instructions: "Pick the caption style that best fits the delivery and content of CURRENT SECTION. Different sections may use different styles.",
+          criteria: CAPTION_STYLE_MENU,
+        },
+      },
+    );
+  });
+
   // ---- per-beat requests ----
   const beatResults = await mapLimit(beats, 32, async (beat, idx) => {
     const prev = idx > 0 ? beats[idx - 1].text : "";
@@ -212,8 +267,8 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
     const state = {
       footage,
       transcript,
-      currentBeat: idx + 1,
-      current: `>>> CURRENT BEAT ${idx + 1}: "${beat.text}"`,
+      currentShot: idx + 1,
+      current: `>>> CURRENT SHOT ${idx + 1}: "${beat.text}"`,
       prev,
       next,
     };
@@ -223,28 +278,22 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
     for (const c of candidates) emphasisCriteria[c.id] = `the word "${c.text}"`;
 
     const questions: Record<string, Question> = {
-      needs_visual: {
-        type: "noul",
-        instructions: "Would an on-screen graphic make CURRENT BEAT clearer or punchier for a short-form viewer, beyond just captions?",
-        criteria: {
-          true: "The beat states a fact, number, comparison, list, or claim that a graphic would clarify or punch up.",
-          false: "The beat is connective/transitional talk with nothing concrete enough to visualize.",
-        },
+      overlay: {
+        type: "choice",
+        instructions: "What should be drawn on the screen for CURRENT SHOT, besides the captions and the speaker?",
+        criteria: OVERLAY_MENU,
       },
-      template: { type: "choice", instructions: "Which visual template best fits the content of CURRENT BEAT?", criteria: templateChoiceCriteria() },
-      text_effect: { type: "choice", instructions: "Which caption text-reveal effect best fits CURRENT BEAT's tone?", criteria: TEXT_EFFECT_MENU },
-      transition: { type: "choice", instructions: "Which transition (if any) should play on the cut INTO CURRENT BEAT, given PREV?", criteria: TRANSITION_MENU },
-      punch_in: {
-        type: "noul",
-        instructions: "Is CURRENT BEAT a punchline or key claim worth a camera punch-in for emphasis?",
-        criteria: {
-          true: "CURRENT BEAT lands the video's key point, a punchline, or a standout claim.",
-          false: "CURRENT BEAT is routine explanation with nothing to punch in on.",
-        },
+      camera: {
+        type: "choice",
+        instructions: "How should the camera treat the speaker during CURRENT SHOT, given PREV and NEXT?",
+        criteria: CAMERA_MENU,
       },
-      sfx: { type: "choice", instructions: "Which sound effect (if any) best punctuates the cut into CURRENT BEAT?", criteria: SFX_MENU },
+      template: { type: "choice", instructions: "Which visual template best fits the content of CURRENT SHOT?", criteria: templateChoiceCriteria() },
+      text_effect: { type: "choice", instructions: "Which caption text-reveal effect best fits CURRENT SHOT's tone?", criteria: TEXT_EFFECT_MENU },
+      transition: { type: "choice", instructions: "Which transition (if any) should play on the cut INTO CURRENT SHOT, given PREV?", criteria: TRANSITION_MENU },
+      sfx: { type: "choice", instructions: "Which sound effect (if any) best punctuates the cut into CURRENT SHOT?", criteria: SFX_MENU },
       ...(candidates.length >= 2
-        ? { emphasis: { type: "choice", instructions: "Which single word in CURRENT BEAT is the most important one to visually emphasize?", criteria: emphasisCriteria } as Question }
+        ? { emphasis: { type: "choice", instructions: "Which single word in CURRENT SHOT is the most important one to visually emphasize?", criteria: emphasisCriteria } as Question }
         : {}),
     };
 
@@ -268,19 +317,53 @@ export async function decide(words: Word[], perception: Perception, meta: { titl
       : undefined,
   };
 
+  const sectionDecisions: SectionDecision[] = [];
+  for (let k = 0; k < sections.length; k++) {
+    const sec = sections[k];
+    let captionStyle = global.captionStyle;
+    const pending = sectionPromises[k];
+    if (pending) {
+      const r = await pending;
+      latencies.push(r.latencyMs);
+      inputTokens += r.response.usage?.input_tokens ?? 0;
+      outputTokens += r.response.usage?.output_tokens ?? 0;
+      const ans = asChoice(r.response.answers.caption_style);
+      captionStyle = { choice: ans.choice as any, probabilities: ans.probabilities, confidence: ans.confidence };
+    }
+    sectionDecisions.push({ firstShot: beats[sec.first].id, lastShot: beats[sec.last].id, start: sec.start, end: sec.end, captionStyle });
+  }
+  global.sections = sectionDecisions;
+
   const beatDecisions: BeatDecision[] = beatResults.map(({ beat, result }) => {
     latencies.push(result.latencyMs);
     inputTokens += (result.response.usage?.input_tokens ?? 0);
     outputTokens += (result.response.usage?.output_tokens ?? 0);
     const a = result.response.answers;
     const emphasisAns = a.emphasis ? asChoice(a.emphasis) : null;
+    const overlayAns = asChoice(a.overlay);
+    const cameraAns = asChoice(a.camera);
+    const op = overlayAns.probabilities;
+    // "a graphic is wanted" = the odds of either graphic overlay; a giant word or nothing leaves the picture to the face
+    const needsVisual = Math.min(1, (op.card ?? 0) + (op.keyword_pill ?? 0));
+    const tplAns = asChoice(a.template);
+    let tplChoice = tplAns.choice as TemplateId;
+    if (overlayAns.choice === "keyword_pill") tplChoice = "keyword_pill";
+    else if (overlayAns.choice === "card" && tplChoice === "keyword_pill") {
+      // the card menu was picked, so the card is not the small pill: take the best real card template
+      const best = Object.entries(tplAns.probabilities)
+        .filter(([id]) => id !== "keyword_pill")
+        .sort((x, y) => y[1] - x[1])[0];
+      if (best) tplChoice = best[0] as TemplateId;
+    }
     return {
       beatId: beat.id,
-      needsVisual: asNoul(a.needs_visual).noul,
-      template: { choice: asChoice(a.template).choice as any, probabilities: asChoice(a.template).probabilities, confidence: asChoice(a.template).confidence },
+      needsVisual,
+      overlay: { choice: overlayAns.choice as any, probabilities: overlayAns.probabilities, confidence: overlayAns.confidence },
+      camera: { choice: cameraAns.choice as any, probabilities: cameraAns.probabilities, confidence: cameraAns.confidence },
+      template: { choice: tplChoice, probabilities: tplAns.probabilities, confidence: tplAns.confidence },
       textEffect: { choice: asChoice(a.text_effect).choice as any, probabilities: asChoice(a.text_effect).probabilities, confidence: asChoice(a.text_effect).confidence },
       transition: { choice: asChoice(a.transition).choice as any, probabilities: asChoice(a.transition).probabilities, confidence: asChoice(a.transition).confidence },
-      punchIn: asNoul(a.punch_in).noul,
+      punchIn: cameraAns.probabilities.punch ?? 0,
       sfx: { choice: asChoice(a.sfx).choice, probabilities: asChoice(a.sfx).probabilities, confidence: asChoice(a.sfx).confidence },
       emphasis: emphasisAns ? { choice: emphasisAns.choice, probabilities: emphasisAns.probabilities, confidence: emphasisAns.confidence } : null,
     };

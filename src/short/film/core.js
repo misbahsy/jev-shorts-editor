@@ -86,7 +86,10 @@
       elm.style.lineHeight = String(lineHeight);
       elm.style.display = "inline-block";
       elm.style.whiteSpace = opts.wrap === false ? "nowrap" : "normal";
-      elm.style.wordBreak = "break-word";
+      // templates that later set wordBreak "normal" (so words never split mid-letter) must fit in
+      // that mode: measuring with "break-word" lets a long word wrap mid-letter, passes, and then
+      // overflows once the break is switched off
+      elm.style.wordBreak = opts.wordBreak || "break-word";
       var size = max;
       elm.textContent = text;
       elm.style.fontSize = size + "px";
@@ -169,6 +172,61 @@
     if (beats.length === 0) return null;
     if (t < beats[0].start) return beats[0];
     return beats[beats.length - 1];
+  }
+
+  // Build-time text safety net, run on every mounted card at its settled state (75% of its
+  // hold). A text element whose content is wider than its own box gets its font shrunk in 2px
+  // steps until it fits; anything that still overflows at the floor is recorded in
+  // window.__filmOverflow so the renderer can report it. Build time only, so frames stay a pure
+  // function of t.
+  Film.overflow = [];
+  window.__filmOverflow = Film.overflow;
+
+  // a text block: has text and no structural children (fx.text turns a title into word spans)
+  function isTextBlock(e) {
+    return !!e.textContent.trim() && !e.querySelector("div,svg,img,canvas");
+  }
+
+  function auditOverflow(inner, def, dur, ctx, beat) {
+    try {
+      def.update(inner, dur * 0.75, dur, ctx);
+    } catch (err) {
+      return;
+    }
+    var all = inner.querySelectorAll("*");
+    for (var i = 0; i < all.length; i++) {
+      var e = all[i];
+      if (!isTextBlock(e)) continue;
+      // Decorations (a highlighter swipe, an underline) are absolutely positioned and may poke
+      // out of the box on purpose; only the text itself counts, so they are hidden while measuring.
+      var decos = [];
+      var kids = e.querySelectorAll("*");
+      for (var k = 0; k < kids.length; k++) {
+        if (getComputedStyle(kids[k]).position === "absolute") decos.push([kids[k], kids[k].style.display]);
+      }
+      for (var d = 0; d < decos.length; d++) decos[d][0].style.display = "none";
+      var over = function () {
+        return e.clientWidth >= 8 && e.scrollWidth > e.clientWidth + 2;
+      };
+      if (over()) {
+        var start = parseFloat(getComputedStyle(e).fontSize) || 0;
+        var size = start;
+        var guard = 0;
+        while (size > 14 && over() && guard++ < 60) {
+          size -= 2;
+          e.style.fontSize = size + "px";
+        }
+        Film.overflow.push({
+          beat: beat.id,
+          template: beat.visual.template,
+          text: (e.textContent || "").trim().slice(0, 60),
+          from: start,
+          to: size,
+          fixed: !over(),
+        });
+      }
+      for (var r = 0; r < decos.length; r++) decos[r][0].style.display = decos[r][1];
+    }
   }
 
   Film.init = function (plan) {
@@ -308,6 +366,9 @@
       } else {
         built = buildAt(1);
       }
+      // the split path applies the panel scale before the audit; the audit only touches font
+      // sizes of boxes that overflow themselves, so it is independent of that transform
+      auditOverflow(built.inner, def, beatDur(beat), built.ctx, beat);
       mount.style.display = "none";
       mounts.push({ beat: beat, mount: mount, inner: built.inner, def: def, ctx: built.ctx });
     });
@@ -319,9 +380,7 @@
     });
     root.appendChild(captionsLayer);
     var captionRuntime = window.FilmCaptions.build(captionsLayer, plan);
-    // engine caption styles (24fps) are drawn by hook24.js above the hook layer instead
-    var engineCaps = !!(window.__FILM24 && window.__FILM24.caption);
-    if (engineCaps) captionsLayer.style.display = "none";
+    // engine caption styles (24fps) are drawn by hook24.js; captions.js goes dark while one is in force
 
     // ---- 24fps layers: opening hook (behind the speaker), engine captions, light leaks ----
     var hook24 = window.FilmHook24 ? window.FilmHook24.build(root, plan) : null;
@@ -407,7 +466,7 @@
         }
       }
 
-      if (!engineCaps) window.FilmCaptions.render(captionRuntime, t, active, plan);
+      window.FilmCaptions.render(captionRuntime, t, active, plan);
       window.FilmTransitions.render(transitionLayer, t, plan);
       var pending = hook24 ? window.FilmHook24.render(hook24, t, active, plan) : null;
 

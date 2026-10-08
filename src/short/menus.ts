@@ -78,6 +78,26 @@ export const TRANSITION_MENU: Record<string, string> = {
   glitch_slice: "A digital glitch/slice distortion on the cut — techy or disruptive beat change.",
 };
 
+/**
+ * What the camera does on a shot of the speaker. Descriptions name the kind of line it suits, so the
+ * classifier matches meaning (a confession, a claim, a build-up) and never has to count anything.
+ */
+export const CAMERA_MENU: Record<string, string> = {
+  base: "Steady medium framing of the speaker. The line explains, describes or walks through a detail in an even tone, with nothing special to underline.",
+  punch: "A quick snap in to about one tenth closer. The line lands a key claim, a number, a punchline or a bold verdict that deserves emphasis.",
+  face_closeup: "A tight close-up on the speaker's face, filling the frame. The line is personal, confessional, serious or emotional, or speaks straight to the viewer (you, your, I think, honestly).",
+  push_in: "A slow steady zoom toward the face across the whole shot. The line builds toward a point, tells a story that is ramping up, or sets up something the next line pays off.",
+  drift: "A slow sideways glide with a slight zoom. The line is reflective, relaxed or scene-setting, a thoughtful aside that gives the picture a gentle sense of motion.",
+};
+
+/** What is drawn over or behind the speaker on a shot. */
+export const OVERLAY_MENU: Record<string, string> = {
+  none: "The speaker and captions carry the shot alone. The line is conversational, personal reaction or connective talk with nothing concrete to show.",
+  card: "A graphic card with the line's key content: a fact, a list, a comparison, a step sequence, a number, a quote or a definition that a viewer would grasp faster seeing it.",
+  keyword_pill: "One short label pinned beside the speaker while they keep talking. The line introduces a named tool, product, term or idea whose name is worth seeing spelled out.",
+  giant_word: "One huge word fills the frame behind the speaker's head. The line has a single strong word that carries the whole point, such as a dramatic verb, an absolute, or the name of the big thing being discussed.",
+};
+
 /** template -> { description, underChin } */
 export const TEMPLATE_MENU: Record<TemplateId, { description: string; underChin: boolean }> = {
   big_statement: {

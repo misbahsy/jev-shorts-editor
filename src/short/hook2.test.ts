@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { applyHookStructure, buildHookPlan, leakEnvelope, hasBehindLayer, headTopFromFace, placeBehindHead, bindHook } from "./hook";
-import { judgeCoverage, hookWindowFilter } from "./matte";
+import { applyHookStructure, buildHookPlan, buildGiantPlan, leakEnvelope, hasBehindLayer, headTopFromFace, placeBehindHead, bindHook } from "./hook";
+import { judgeCoverage, windowFilter, windowFrames } from "./matte";
 import { buildPrompt } from "./copy";
 import { inlineEngine, fontFaceCss, film24Config } from "./film/buildFilm";
 import type { BeatStructure } from "./structure";
@@ -67,7 +67,7 @@ test("judgeCoverage accepts a steady matte and rejects an empty or patchy one", 
   assert.equal(judgeCoverage(patchy).ok, false);
 });
 
-test("hookWindowFilter concatenates only the shots inside the hook, clipped to hookEnd", () => {
+test("windowFilter renders only the shots that overlap the window, whole, then trims to the window", () => {
   const plan = {
     source: { path: "x.mp4", durationSec: 30, width: 1920, height: 1080, fps: 30 },
     output: { width: 1080, height: 1920, fps: 30 },
@@ -83,10 +83,14 @@ test("hookWindowFilter concatenates only the shots inside the hook, clipped to h
       { id: "c", start: 6, end: 9, layout: "full", punchIn: false },
     ],
   } as unknown as ShortPlan;
-  const { filter, label } = hookWindowFilter(plan, 3);
-  assert.equal(label, "hookv");
-  assert.match(filter, /concat=n=2:v=1:a=0\[hookv\]/);
-  assert.ok(!filter.includes("s2"));
+  const hook = windowFilter(plan, 0, 3, 0, "hookv");
+  assert.match(hook, /concat=n=2:v=1:a=0,trim=start=0\.0000:end=3\.0000,setpts=PTS-STARTPTS\[hookv\]/);
+  assert.ok(!hook.includes("s2"));
+  // a window in the middle of beat b starts 1 s into that shot, and labels continue from idxBase
+  const mid = windowFilter(plan, 3, 5, 7, "w1");
+  assert.match(mid, /concat=n=1:v=1:a=0,trim=start=1\.0000:end=3\.0000,setpts=PTS-STARTPTS\[w1\]/);
+  assert.ok(mid.includes("[s7]"));
+  assert.equal(windowFrames({ startSec: 3, endSec: 5.2 }, 30), 66);
 });
 
 test("buildPrompt asks for the hook word only when a hook is requested", () => {
@@ -121,13 +125,32 @@ test("fontFaceCss embeds exactly the fonts the presets use", () => {
 test("film24Config resolves engine captions only for engine styles, and leaks only when planned", () => {
   const base = { words: [{ i: 0, text: "hi", start: 0, end: 1, emph: true }], style: { captionStyle: "anton_karaoke" }, fx: { leaks: [5] } };
   const a = film24Config(base);
-  assert.equal(a.caption?.karaoke, "color");
-  assert.deepEqual(a.captionWords, [{ w: "hi", s: 0, e: 1, emph: true }]);
+  assert.equal(a.captions.length, 1);
+  assert.equal(a.captions[0].preset.karaoke, "color");
+  assert.deepEqual(a.captions[0].words, [{ w: "hi", s: 0, e: 1, emph: true }]);
   assert.equal(a.leak?.type, "light-leak");
   const b = film24Config({ ...base, style: { captionStyle: "word_pop" }, fx: { leaks: [] } });
-  assert.equal(b.caption, null);
-  assert.equal(b.captionWords, null);
+  assert.deepEqual(b.captions, []);
   assert.equal(b.leak, null);
+});
+
+test("film24Config builds one engine track per engine style, each holding only its own sections' words", () => {
+  const words = [0, 1, 2, 3, 4, 5].map(i => ({ i, text: `w${i}`, start: i, end: i + 0.8 }));
+  const plan = {
+    words,
+    style: { captionStyle: "anton_karaoke" },
+    captionSections: [
+      { start: 0, end: 2, style: "anton_karaoke" },
+      { start: 2, end: 4, style: "word_pop" },
+      { start: 4, end: 6, style: "anton_karaoke" },
+      { start: 6, end: 8, style: "inter_editorial" },
+    ],
+  };
+  const c = film24Config(plan).captions;
+  assert.deepEqual(c.map(t => t.style), ["anton_karaoke", "inter_editorial"]);
+  assert.deepEqual(c[0].ranges, [[0, 2], [4, 6]]);
+  assert.deepEqual((c[0].words as any[]).map(w => w.w), ["w0", "w1", "w4", "w5"]);
+  assert.deepEqual(c[1].words, []);
 });
 
 test("hook24.js leakEnvelope matches hook.ts", () => {
@@ -151,4 +174,20 @@ test("placeBehindHead lifts the giant word to the top of the head, under the top
   assert.deepEqual((g.preset.layers as any[]).map(x => x.y), (ghost.preset.layers as any[]).map(x => x.y));
   const hp = buildHookPlan({ style: "giant_word", copy: { word: "STOP", line: "a" }, opening: "stop", endSec: 3, cutout: { ok: true, frames: 90 }, faceTopFrac: 0.2, headTopFrac: 0.106 });
   assert.ok((hp.preset.layers as any[])[0].y < 0.2);
+});
+
+test("buildGiantPlan: a clean word behind the head with a cut-out, in front of the headroom without one", () => {
+  const args = { shotId: "b8", start: 15.73, end: 17.57, word: "stop!!", fgDir: "fg/g1", headTopFrac: 0.2 };
+  const ok = buildGiantPlan({ ...args, cutout: { ok: true, frames: 55 } });
+  assert.equal(ok.word, "STOP");
+  assert.equal(ok.cutout, true);
+  assert.equal(ok.fgFrames, 55);
+  assert.equal(ok.fgDir, "fg/g1");
+  assert.ok(hasBehindLayer(ok.preset));
+  const bad = buildGiantPlan({ ...args, cutout: { ok: false, frames: 0, reason: "no person" } });
+  assert.equal(bad.cutout, false);
+  assert.equal(bad.fgFrames, 0);
+  assert.ok(!hasBehindLayer(bad.preset));
+  // the word is clipped to something that fits on screen
+  assert.equal(buildGiantPlan({ ...args, word: "extraordinarilylongword", cutout: { ok: true, frames: 1 } }).word.length, 14);
 });

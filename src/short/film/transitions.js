@@ -125,7 +125,8 @@
   }
 
   function findActiveTransition(plan, t) {
-    var beats = plan.beats;
+    // the fine-grained shot layer owns transitions; older plans only have beats
+    var beats = plan.shots && plan.shots.length ? plan.shots : plan.beats;
     for (var i = 0; i < beats.length; i++) {
       var b = beats[i];
       var lt = t - b.start;

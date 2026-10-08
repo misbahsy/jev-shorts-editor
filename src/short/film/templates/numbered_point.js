@@ -131,6 +131,9 @@ Film.registerTemplate("numbered_point", {
       min: 38,
       lineHeight: 1.0,
       wrap: oneWord ? false : undefined,
+      // the title is shown with wordBreak "normal", so it has to be fitted in that mode: a
+      // long word ("FRAMEWORKS") must shrink the type, not be split by the measuring pass
+      wordBreak: "normal",
     });
     title.style.display = "block";
     title.style.wordBreak = "normal";

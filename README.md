@@ -9,10 +9,11 @@ On an Apple Silicon Mac, a 40 second clip takes about 9 seconds to plan and abou
 ## What you get
 
 - **A clean take.** Retakes, dead air and filler sounds are cut out before anything else happens. When you say a line twice, only the last take stays: Jev confirms the repeats found by matching, and a small LLM on Groq reads the whole transcript for any take the matching missed, with code checks so it can never drop the last take of a line. It also drops the weaker of two back-to-back rewordings of one claim, and dangling scraps of quiet speech. Cuts follow the sound in the audio, not the transcript timestamps, and leave about 50 ms before a word and 80 ms after it, so joins have no audible gap. Long pauses shrink to that, and the silence before the first word and after the last one is trimmed. Audio that sounds like speech is never cut just because the transcript missed it: those stretches are transcribed again, and any that still have no words are kept. The cleaned clip is transcribed once more and those words drive the captions, so they match what you hear. Every cut is written to `clean.json` in the work folder.
-- **Cuts that do not jump.** The framing alternates between normal and a slight punch-in at each cut, so a jump cut reads as a camera change. Audio is faded at every join.
+- **Something new every 2 to 3 seconds.** The clip is split into shots of about 2 to 3 seconds at natural pauses. Jev picks a camera for each one (normal, punch-in, face close-up, slow push-in, slow drift), plus an overlay (card, keyword pill, giant word behind your head or nothing), a text effect, a transition and a sound effect. Rhythm rules in code keep it watchable: a visible change at least every 3 seconds, no repeated camera, a cap on how much of the video is covered by cards, and a clean hook. Every time a rule overrides Jev, it is logged in `plan.json` under `rhythm`. Audio is faded at every join.
+- **Giant words behind you.** One big word sits behind your head, with you cut out in front of it, at the hook and a few times later.
 - **Consistent loudness.** The final mix is high-passed and normalized to about -14 LUFS with a true peak of -1 dBTP.
 - **Vertical reframing.** Faces are found with Apple Vision, so the speaker stays in frame when a wide shot becomes 9:16.
-- **Animated captions** in one of five styles.
+- **Animated captions** in one of eight styles, and the style can change at section boundaries.
 - **Graphic cards** picked per phrase from 18 templates, such as stat callouts, checklists, quotes, versus panels and code terminals.
 - **One look per video.** Jev picks a style family and an accent color that fit the content, and the whole short uses them.
 - **Transitions and sound effects** placed on the beats that need them.
@@ -122,11 +123,13 @@ input.mp4
   │           → clean.mp4, clean.json (every cut and why)
   │
   ├─ plan ───── perceive   (Apple Vision faces + one vision-LLM look at the scene)
-  │             decide     (Jev picks style, captions, a template per phrase, transitions)
+  │             decide     (Jev picks style, then per shot: camera, overlay, text effect,
+  │                         transition, sfx; rhythm rules fix what would look repetitive)
   │             structure  (merge and space the beats)
   │             hold       (decide how long each graphic stays up)
   │             copy       (Groq writes the short on-screen text for each card)
   │             finalize + geometry (layout, crop, safe areas)
+  │             cutouts    (Apple Vision person matte for the hook and giant words)
   │           → plan.json
   │
   ├─ film ───── one HTML page that draws every frame as a pure function of time
@@ -149,7 +152,11 @@ Everything after the clean step works on `clean.mp4`, with the words moved onto 
 
 **Accents (8):** blue, green, yellow, orange, red, pink, purple, cyan.
 
-**Caption styles (5):** word_pop, single_word, karaoke_line, boxed_highlight, typewriter_line.
+**Caption styles (8):** word_pop, single_word, karaoke_line, boxed_highlight, typewriter_line, anton_karaoke, archivo_chip, inter_editorial.
+
+**Cameras (5):** base, punch, face_closeup, push_in, drift.
+
+**Overlays (4):** none, card, keyword_pill, giant_word.
 
 **Transitions (6):** hard_cut, flash, whip_streak, glass_wipe, zoom_blur, glitch_slice.
 

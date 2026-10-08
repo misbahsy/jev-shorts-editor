@@ -172,6 +172,19 @@
     return { chunks: chunks, container: container, builtIdx: -1, builtStyle: null, built: null };
   }
 
+  // The style in force at t: the planned section's style (Jev may switch at section boundaries),
+  // else the plan-wide style. Pure function of t.
+  function styleAt(plan, t) {
+    var secs = plan.captionSections;
+    if (secs && secs.length) {
+      for (var i = 0; i < secs.length; i++) {
+        if (t >= secs[i].start - 1e-6 && t < secs[i].end - 1e-6) return secs[i].style;
+      }
+      return secs[secs.length - 1].style;
+    }
+    return plan.style.captionStyle;
+  }
+
   function render(runtime, t, activeBeat, plan) {
     var layout = activeBeat ? activeBeat.layout : "full";
     var g = plan.geometry[layout];
@@ -184,7 +197,17 @@
       return;
     }
     var chunk = runtime.chunks[idx];
-    var styleId = plan.style.captionStyle;
+    var styleId = styleAt(plan, t);
+    // engine (24fps) caption styles are drawn by hook24.js; this layer stays dark for them
+    var eng = window.__FILM24 && window.__FILM24.captions;
+    if (eng) {
+      for (var ei = 0; ei < eng.length; ei++) {
+        if (eng[ei].style === styleId) {
+          runtime.container.style.opacity = "0";
+          return;
+        }
+      }
+    }
 
     if (runtime.builtIdx !== idx || runtime.builtStyle !== styleId) {
       runtime.built = buildRoot(runtime.container, chunk, styleId, plan);
@@ -301,5 +324,5 @@
     return a + (b - a) * p;
   }
 
-  window.FilmCaptions = { build: build, render: render, _buildChunks: buildChunks };
+  window.FilmCaptions = { build: build, render: render, styleAt: styleAt, _buildChunks: buildChunks };
 })();

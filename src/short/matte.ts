@@ -1,14 +1,16 @@
 /**
- * Person cut-out for the opening hook. The film frames are a transparent overlay and the video is
- * not in the page, so "text behind the speaker" needs the speaker as an overlay too: for the hook
- * window only, this
+ * Person cut-out for the opening hook and the mid-video giant words. The film frames are a
+ * transparent overlay and the video is not in the page, so "text behind the speaker" needs the
+ * speaker as an overlay too: for each window that carries a behind-the-head word (the hook, and
+ * every giant-word shot), this
  *   1. renders the video in OUTPUT geometry (the same per-shot crop/scale/punch-in as render.ts, so
  *      the cut-out lines up pixel for pixel with what ffmpeg composites underneath),
  *   2. runs Apple Vision person segmentation over those frames (bin/matte, perceive/matte.swift),
  *   3. alphamerges the matte onto the RGB frames -> fg/%05d.png (person with alpha).
  * The film page puts fg.png above the giant word and below the captions; everything else about the
- * composite is unchanged. Any failure returns { ok: false, reason } so the caller falls back to a
- * hook layout without behind-subject layers.
+ * composite is unchanged. Any failure returns { ok: false, reason } for that window so the caller
+ * falls back to a layout without behind-subject layers. Windows are independent: the hook writes
+ * fg/00000.png.., a giant word writes fg/g<n>/00000.png.., frame index = round((t - start) * fps).
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
@@ -50,15 +52,22 @@ export function judgeCoverage(frames: FrameCoverage[], minMean = MIN_COVERAGE): 
   return { ok: true, mean };
 }
 
-/** ffmpeg filter graph that renders the hook window in OUTPUT geometry (one JPEG/PNG per output frame). */
-export function hookWindowFilter(plan: ShortPlan, hookEnd: number): { filter: string; label: string } {
-  const shots = buildShots(plan)
-    .filter(s => s.startSec < hookEnd - 1e-6)
-    .map(s => ({ ...s, endSec: Math.min(s.endSec, hookEnd) }));
-  const parts = shots.map((s, i) => shotFilter(s, plan, i));
-  const inputs = shots.map((_, i) => `[s${i}]`).join("");
-  parts.push(`${inputs}concat=n=${shots.length}:v=1:a=0[hookv]`);
-  return { filter: parts.join(";"), label: "hookv" };
+/**
+ * ffmpeg filter graph for any window [startSec, endSec) in OUTPUT geometry. It renders every
+ * camera shot that overlaps the window IN FULL (a slow push-in is a function of its own shot's
+ * progress, so clipping it would change the framing) and then trims to the window. `idxBase`
+ * keeps the per-shot labels unique when several windows share one ffmpeg graph.
+ */
+export function windowFilter(plan: ShortPlan, startSec: number, endSec: number, idxBase: number, label: string): string {
+  const eps = 1e-6;
+  const shots = buildShots(plan).filter(s => s.endSec > startSec + eps && s.startSec < endSec - eps);
+  if (shots.length === 0) throw new Error(`no camera shot overlaps ${startSec}-${endSec}`);
+  const parts = shots.map((s, i) => shotFilter(s, plan, idxBase + i));
+  const inputs = shots.map((_, i) => `[s${idxBase + i}]`).join("");
+  const from = Math.max(0, startSec - shots[0].startSec);
+  const to = from + (endSec - startSec);
+  parts.push(`${inputs}concat=n=${shots.length}:v=1:a=0,trim=start=${from.toFixed(4)}:end=${to.toFixed(4)},setpts=PTS-STARTPTS[${label}]`);
+  return parts.join(";");
 }
 
 function ensureMatteBinary(): string {
@@ -72,73 +81,118 @@ function ensureMatteBinary(): string {
   return bin;
 }
 
-export function buildCutout(
-  plan: ShortPlan,
-  workDir: string,
-  hookEnd: number,
-  opts: { quality?: MatteQuality } = {},
-): CutoutResult {
+/** One stretch of the video that needs a person cut-out. */
+export interface CutWindow {
+  /** Unique name, used for the scratch directories. */
+  id: string;
+  startSec: number;
+  endSec: number;
+  /** Where the cut-out frames go, relative to the work dir (fg for the hook, fg/g0 for a giant word). */
+  outDir: string;
+}
+
+export function windowFrames(w: Pick<CutWindow, "startSec" | "endSec">, fps: number): number {
+  return Math.max(1, Math.round((w.endSec - w.startSec) * fps));
+}
+
+/**
+ * Builds the cut-out for several windows. All windows are rendered by ONE ffmpeg pass (one decode
+ * of the source); each window is then segmented and alpha-merged on its own, so the temporal
+ * smoothing in the matte tool never bleeds across windows and a bad window fails alone.
+ */
+export function buildCutouts(plan: ShortPlan, workDir: string, windows: CutWindow[], opts: { quality?: MatteQuality } = {}): Record<string, CutoutResult> {
   const quality = opts.quality ?? "balanced";
-  const t0 = Date.now();
-  const ms = { extract: 0, matte: 0, merge: 0, total: 0 };
-  const frames = Math.round(hookEnd * plan.output.fps);
-  const srcDir = join(workDir, "fg-src");
-  const matteDir = join(workDir, "fg-matte");
-  const fgDir = join(workDir, "fg");
-  for (const d of [srcDir, matteDir, fgDir]) {
-    rmSync(d, { recursive: true, force: true });
-    mkdirSync(d, { recursive: true });
+  const fps = plan.output.fps;
+  const results: Record<string, CutoutResult> = {};
+  if (windows.length === 0) return results;
+  const scratch = join(workDir, "fg-scratch");
+  rmSync(scratch, { recursive: true, force: true });
+  const fgRoot = join(workDir, "fg");
+  rmSync(fgRoot, { recursive: true, force: true });
+  mkdirSync(fgRoot, { recursive: true });
+  for (const w of windows) {
+    rmSync(join(workDir, w.outDir), { recursive: true, force: true });
+    mkdirSync(join(workDir, w.outDir), { recursive: true });
+    mkdirSync(join(scratch, w.id, "src"), { recursive: true });
+    mkdirSync(join(scratch, w.id, "matte"), { recursive: true });
   }
-  const done = (r: Omit<CutoutResult, "ms" | "quality">): CutoutResult => {
-    ms.total = Date.now() - t0;
-    return { ...r, ms, quality };
+  const fail = (w: CutWindow, reason: string, ms: CutoutResult["ms"], coverageMean?: number) => {
+    results[w.id] = { ok: false, frames: 0, reason, coverageMean, ms, quality };
   };
+
+  // 1. every window in output geometry, one decode
+  const t0 = Date.now();
+  let extractMs = 0;
   try {
-    // 1. hook window in output geometry
-    let t = Date.now();
-    const { filter, label } = hookWindowFilter(plan, hookEnd);
-    ffmpeg(
-      [
-        "-i", plan.source.path,
-        "-filter_complex", filter,
-        "-map", `[${label}]`,
-        "-r", String(plan.output.fps), "-fps_mode", "cfr",
-        "-frames:v", String(frames),
+    const filters: string[] = [];
+    const args = ["-i", plan.source.path];
+    let base = 0;
+    const maps: string[] = [];
+    for (const w of windows) {
+      filters.push(windowFilter(plan, w.startSec, w.endSec, base, `w_${w.id}`));
+      base += buildShots(plan).filter(s => s.endSec > w.startSec + 1e-6 && s.startSec < w.endSec - 1e-6).length;
+      maps.push(
+        "-map", `[w_${w.id}]`,
+        "-r", String(fps), "-fps_mode", "cfr",
+        "-frames:v", String(windowFrames(w, fps)),
         "-q:v", "2", "-start_number", "0",
-        join(srcDir, "%05d.jpg"),
-      ],
-      "hook-frames",
-    );
-    ms.extract = Date.now() - t;
-
-    // 2. Vision person segmentation
-    t = Date.now();
-    const bin = ensureMatteBinary();
-    const out = execFileSync(bin, [srcDir, matteDir, quality], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-    const report = JSON.parse(out) as { frames: FrameCoverage[] };
-    ms.matte = Date.now() - t;
-    const verdict = judgeCoverage(report.frames);
-    if (!verdict.ok) return done({ ok: false, frames: 0, reason: verdict.reason, coverageMean: verdict.mean });
-
-    // 3. matte -> alpha
-    t = Date.now();
-    ffmpeg(
-      [
-        "-start_number", "0", "-i", join(srcDir, "%05d.jpg"),
-        "-start_number", "0", "-i", join(matteDir, "%05d.png"),
-        "-filter_complex", "[0:v]format=rgb24[c];[1:v]format=gray[m];[c][m]alphamerge,format=rgba[o]",
-        "-map", "[o]",
-        "-compression_level", "1", "-start_number", "0",
-        join(fgDir, "%05d.png"),
-      ],
-      "hook-alphamerge",
-    );
-    ms.merge = Date.now() - t;
-    const written = readdirSync(fgDir).filter(f => f.endsWith(".png")).length;
-    if (written < frames - 1) return done({ ok: false, frames: 0, reason: `only ${written}/${frames} cut-out frames written`, coverageMean: verdict.mean });
-    rmSync(srcDir, { recursive: true, force: true });
-    return done({ ok: true, frames: written, coverageMean: verdict.mean });
+        join(scratch, w.id, "src", "%05d.jpg"),
+      );
+    }
+    ffmpeg([...args, "-filter_complex", filters.join(";"), ...maps], "cutout-frames");
+    extractMs = Date.now() - t0;
   } catch (err) {
-    return done({ ok: false, frames: 0, reason: `cut-out failed: ${(err as Error).message.slice(0, 200)}` });
+    const ms = { extract: Date.now() - t0, matte: 0, merge: 0, total: Date.now() - t0 };
+    for (const w of windows) fail(w, `cut-out failed: ${(err as Error).message.slice(0, 200)}`, ms);
+    return results;
   }
+
+  // 2. segment + alpha merge, window by window
+  const bin = ensureMatteBinary();
+  for (const w of windows) {
+    const frames = windowFrames(w, fps);
+    const ms = { extract: Math.round(extractMs / windows.length), matte: 0, merge: 0, total: 0 };
+    const tw = Date.now();
+    const srcDir = join(scratch, w.id, "src");
+    const matteDir = join(scratch, w.id, "matte");
+    try {
+      let t = Date.now();
+      const out = execFileSync(bin, [srcDir, matteDir, quality], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+      const report = JSON.parse(out) as { frames: FrameCoverage[] };
+      ms.matte = Date.now() - t;
+      const verdict = judgeCoverage(report.frames);
+      if (!verdict.ok) {
+        ms.total = ms.extract + Date.now() - tw;
+        fail(w, verdict.reason ?? "matte unusable", ms, verdict.mean);
+        continue;
+      }
+      t = Date.now();
+      ffmpeg(
+        [
+          "-start_number", "0", "-i", join(srcDir, "%05d.jpg"),
+          "-start_number", "0", "-i", join(matteDir, "%05d.png"),
+          "-filter_complex", "[0:v]format=rgb24[c];[1:v]format=gray[m];[c][m]alphamerge,format=rgba[o]",
+          "-map", "[o]",
+          "-compression_level", "1", "-start_number", "0",
+          join(workDir, w.outDir, "%05d.png"),
+        ],
+        `cutout-alphamerge-${w.id}`,
+      );
+      ms.merge = Date.now() - t;
+      ms.total = ms.extract + Date.now() - tw;
+      const written = readdirSync(join(workDir, w.outDir)).filter(f => f.endsWith(".png")).length;
+      if (written < frames - 1) fail(w, `only ${written}/${frames} cut-out frames written`, ms, verdict.mean);
+      else results[w.id] = { ok: true, frames: written, coverageMean: verdict.mean, ms, quality };
+    } catch (err) {
+      ms.total = ms.extract + Date.now() - tw;
+      fail(w, `cut-out failed: ${(err as Error).message.slice(0, 200)}`, ms);
+    }
+  }
+  rmSync(scratch, { recursive: true, force: true });
+  return results;
+}
+
+/** The hook's cut-out: the window [0, hookEnd) written to fg/. */
+export function buildCutout(plan: ShortPlan, workDir: string, hookEnd: number, opts: { quality?: MatteQuality } = {}): CutoutResult {
+  return buildCutouts(plan, workDir, [{ id: "hook", startSec: 0, endSec: hookEnd, outDir: "fg" }], opts).hook;
 }
