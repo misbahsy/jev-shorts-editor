@@ -11,7 +11,7 @@
 #   extra flags      passed to auto.ts as-is, e.g. --no-clean, --workers 8, --title "..."
 #
 # Prints, at the end, lines an agent can parse:
-#   output: <mp4>   work: <dir>   preview: <html>   log: <file>   seconds: <n>   style: ...
+#   output: <mp4>   source length: <s>   length: <s>   work: <dir>   preview: <html>   log: <file>   seconds: <n>   style: ...
 set -uo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -98,14 +98,14 @@ STYLE="$(node -e '
   const p = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
   const s = p.style || {};
   const shots = (p.shots || p.beats || []).length;
-  const src = p.source && p.source.durationSec ? p.source.durationSec.toFixed(1) + "s" : "?";
-  console.log(`family=${s.family} accent=${s.accent} captions=${s.captionStyle} shots=${shots} source=${src}`);
+  console.log(`family=${s.family} accent=${s.accent} captions=${s.captionStyle} shots=${shots}`);
 ' "$WORK/plan.json" 2>/dev/null || echo "?")"
 
 echo
 echo "done."
 if [ -f "$OUT" ]; then
   echo "output: $OUT"
+  echo "source length: $(ffprobe -v error -show_entries format=duration -of csv=p=0 "$INPUT" | xargs printf '%.1f')s"
   echo "length: $(ffprobe -v error -show_entries format=duration -of csv=p=0 "$OUT" | xargs printf '%.1f')s"
 else
   echo "output: (not exported; --preview-only)"

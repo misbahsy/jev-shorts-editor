@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyWordCorrections,
   planOverlays, planCameras, allowedCameras, changeEvents, maxChangeGap, planShotTransitions, assembleShots,
   captionSectionsFrom, giantWordFor, GIANT_MIN_GAP_SEC, type ShotContext, type EventShot,
 } from "./rhythm";
 import { holdMerge, MAX_HOLD_SPLIT_SEC, MAX_HOLD_UNDER_CHIN_SEC } from "./hold";
-import type { Beat, BeatDecision, CameraId, Decisions, OverlayId, RawBeat, TemplateId, Word } from "./types";
+import type { Beat, BeatDecision, CameraId, Decisions, OverlayId, RawBeat, ShotPlan, TemplateId, Word } from "./types";
 
 const dist = (pick: string, extra: Record<string, number> = {}) => ({ [pick]: 0.7, ...extra });
 
@@ -290,4 +291,15 @@ test("a clip where Jev picks no giant word still gets one per GIANT_TARGET_EVERY
   assert.ok(r.log.some(e => e.shotId === "b4" && /promoted/.test(e.rule)));
   // never inside the hook, and never when the cut-out is unavailable
   assert.ok(!Object.keys(planOverlays(shots, decs, words, 3, 30, { allowGiants: false }).giants).length);
+});
+
+test("ASR corrections reach shot text and giant words", () => {
+  const raw = ["turn", "your", "Cloud", "into", "an", "editor."].map((text, i) => ({ i, text, start: i * 0.3, end: i * 0.3 + 0.25 }));
+  const fixed = raw.map(w => (w.i === 2 ? { ...w, text: "Claude" } : w));
+  const shot = { id: "b4", start: 0, end: 1.8, text: "turn your Cloud into an editor.", wordRange: [0, 5] as [number, number], giantWord: "CLOUD" } as ShotPlan;
+  const [out] = applyWordCorrections([shot], raw, fixed);
+  assert.equal(out.text, "turn your Claude into an editor.");
+  assert.equal(out.giantWord, "CLAUDE");
+  const [kept] = applyWordCorrections([{ ...shot, giantWord: "EDITOR" }], raw, fixed);
+  assert.equal(kept.giantWord, "EDITOR");
 });

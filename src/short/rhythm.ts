@@ -535,3 +535,28 @@ export function captionSectionsFrom(
   }
   return merged;
 }
+
+/**
+ * Shots and giant words are chosen from the raw transcript, before the copy stage proposes ASR
+ * corrections ("Cloud" -> "Claude"). Rebuild each shot's text from the corrected words, and swap a
+ * giant word that was taken from a corrected word for its corrected spelling.
+ */
+export function applyWordCorrections(shots: ShotPlan[], rawWords: Word[], corrected: Word[]): ShotPlan[] {
+  const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9.%]/g, "");
+  return shots.map(s => {
+    const [a, b] = s.wordRange;
+    const text = corrected.slice(a, b + 1).map(w => w.text).join(" ");
+    let giantWord = s.giantWord;
+    if (giantWord) {
+      for (let i = a; i <= b; i++) {
+        const before = rawWords[i]?.text ?? "";
+        const after = corrected[i]?.text ?? "";
+        if (key(before) && key(before) === key(giantWord) && key(after) !== key(before)) {
+          giantWord = after.replace(/[^\p{L}\p{N}.%'-]/gu, "").toUpperCase();
+          break;
+        }
+      }
+    }
+    return { ...s, text, ...(giantWord ? { giantWord } : {}) };
+  });
+}

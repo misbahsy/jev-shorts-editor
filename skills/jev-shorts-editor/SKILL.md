@@ -44,7 +44,7 @@ bash <skill-dir>/scripts/run.sh "<clip>" [--out-dir DIR] [--no-clean] [--title "
 - `--no-clean` keeps every take. Use it when the user wants their exact delivery kept.
 - `--title` sets the hook card text. The default is the filename.
 
-The last lines are `output:`, `length:`, `work:`, `preview:`, `log:`, `seconds:` and `style:`. If it fails, read the tail of `log:`. The error messages name the failing stage and usually the fix. Rerun doctor if a tool seems to be missing.
+The last lines are `output:`, `source length:`, `length:`, `work:`, `preview:`, `log:`, `seconds:` and `style:`. If it fails, read the tail of `log:`. The error messages name the failing stage and usually the fix. Rerun doctor if a tool seems to be missing.
 
 ## 3. Check the result before handing it over
 
