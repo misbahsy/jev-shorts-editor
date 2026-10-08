@@ -19,6 +19,17 @@ On an Apple Silicon Mac, a 40 second clip takes about 9 seconds to plan and abou
 - **Transitions and sound effects** placed on the beats that need them.
 - **A live preview** (`preview.html`) you can watch in a browser before the MP4 finishes encoding.
 
+## Use it as a Claude Code skill
+
+This repo is also a Claude Code plugin. Install it from inside Claude Code:
+
+```
+/plugin marketplace add misbahsy/jev-shorts-editor
+/plugin install jev-shorts-editor@jev-shorts-editor
+```
+
+Then ask Claude something like "make a short from ~/Movies/talk.mp4". The skill checks your machine with `npm run doctor`, helps you set up the API keys without them ever going into the chat, runs the edit, and opens the live preview. When the MP4 is done it re-checks the result with `npm run verify` and fixes what it finds, for example a misspelled caption word, by editing the plan and re-rendering.
+
 ## Requirements
 
 This runs on macOS only. The renderer uses WebKit and the face tracker uses Apple Vision.
@@ -85,6 +96,14 @@ npm run short -- --in input.mp4 --out short.mp4
 | `--progress-json` | Print one JSON event per line on stdout and send human logs to stderr. Useful if you are driving this from another app. |
 
 `--plan` and `--film` are handy when you are changing the look of templates. Plan once, then rerender as often as you like without calling any API.
+
+To check a finished short, run the verifier on the MP4:
+
+```bash
+npm run verify -- --video out.mp4 --work <work dir>
+```
+
+It transcribes the finished MP4 again and reports repeated lines, places where the captions and the heard words disagree, the longest pauses, loudness, and a contact sheet with one frame per second. It writes `report.md`, `report.json` and `sheet.png` into a `verify` folder (inside the work folder when you pass `--work`, otherwise next to the video). `--work` is optional but needed for the caption comparison; `--out <dir>` picks another folder.
 
 ## Using a LiteLLM gateway
 
