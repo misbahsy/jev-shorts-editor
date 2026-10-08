@@ -14,7 +14,7 @@ Pipeline (stage → owner file → artifact in work dir):
 | 1 | transcribe (parakeet-mlx, verbatim) ‖ perceive (frames, Apple Vision faces, 1 vision-LLM scene description) | `transcribe.ts`, `perceive.ts`, `perceive/faces.swift` | `words.json`, `perception.json` |
 | 2 | Jev fan-out: 1 global request + 1 request per beat, all questions for a beat in ONE request | `menus.ts`, `decide.ts` | `decisions.json` |
 | 2b | hold: adjacent beats where Jev picked the SAME template merge into one held card (≤9s) | `hold.ts` | — |
-| 3 | structure (deterministic: layout smoothing, confidence-aware variety re-picks, transitions, punch-in) — BEFORE copy, so copy is only written for the template a beat really uses | `structure.ts` | — |
+| 3 | structure (deterministic: layout smoothing, confidence-aware variety re-picks, transitions, camera) — BEFORE copy, so copy is only written for the template a beat really uses | `structure.ts` | — |
 | 4 | ONE batched fast-LLM call (Groq) fills template fields + fixes ASR proper nouns | `copy.ts` | `copy.json` |
 | 4b | finalize: validate copy, geometry from face box, emphasis, sfx, `fields.revealAt` (answer lands when the speaker says it) | `finalize.ts`, `geometry.ts` | `plan.json` |
 | 5 | build ONE self-contained transparent 1080x1920 page for the whole video | `film/buildFilm.ts` | `film.html` |
@@ -42,11 +42,26 @@ Two speaker layouts, hard-switched in ffmpeg; the film page draws everything els
   `{ full:{crop:{x,y,w,h}, face:{x,y,w,h}, captionY, visualRect:{x,y,w,h}}, split:{speaker:{x,y,w,h}, panel:{x,y,w,h}, face:{...}, captionY} }`
   — `face` is in OUTPUT px for that layout, already padded 12%. **Nothing may be drawn intersecting `face`.**
   `captionY` = center of the caption band, placed below the chin (face bottom + margin), never above 1580.
-- `punchIn`: for that beat the speaker crop is scaled 1.10 around the face center (hard cut in/out).
-- Cut framing: when the plan has `cuts`, the punched-in crop is 1.12 (`framing.ts`), and every cut flips
-  between the normal and the punched-in crop. `framing.ts` `buildShots` is the single shot list; render.ts
-  feeds it to ffmpeg and preview.ts embeds it, so both show the same framing. The face stays inside the
-  crop (centered on the face, clamped to the frame). A `split` shot keeps its top edge when it punches in.
+- `punchIn` on a beat is legacy and only kept for plans without `plan.shots`.
+- Camera: `plan.shots` is the fine-grained layer (a shot is about 2 to 3 s, cut by `shots.ts` at natural
+  pauses). Each shot carries a `camera`: `base`, `punch` (1.12 hard cut), `face_closeup` (1.22), `push_in`
+  (slow zoom in) or `drift` (slow pan). `framing.ts` `moveRect` is the single definition of the moving
+  crop; render.ts feeds it to ffmpeg (`scale eval=frame` plus `crop` on shot-local time) and preview.ts
+  embeds the same function, so both show the same framing. The face stays inside the crop. A `split`
+  shot never animates.
+- Rhythm: `rhythm.ts` runs after Jev answers and enforces a visible change at least every 3 s, no
+  repeated camera, a card density cap, at most one giant word per 8 to 10 s (and a floor on long clips)
+  and a clean hook window. Every override is logged in `plan.rhythm.overrides` with the rule name and
+  the before/after value; `shot.jev` keeps what Jev picked.
+- Giant words: `overlay: "giant_word"` draws one word huge BEHIND the speaker. `matte.ts` cuts the person
+  out (Apple Vision) for each giant window and the hook window; the cut-out frames live in `fg/` and
+  `plan.giants` lists them. The hook and giants use the vendored 24fps engine layer (`film/hook24.js`).
+- Caption sections: `plan.captionSections` lets the caption style change at section boundaries (all 8
+  styles are on the menu). `FilmCaptions.styleAt(plan, t)` picks the style; engine styles
+  (`anton_karaoke`, `archivo_chip`, `inter_editorial`) are mounted by `hook24.js`.
+- Text safety: after the page is built, `core.js` measures every card's text at 75% of its hold and
+  shrinks any text that overflows its box. The renderer prints `text overflow fixed` or
+  `text overflow NOT FIXED` for each case (`window.__filmOverflow`).
 
 ## plan.json
 
@@ -71,8 +86,10 @@ interface Beat {
   layout: "full" | "split";
   visual: null | { template: TemplateId; fields: Record<string, unknown>; textEffect: TextEffectId; confidence: number };
   transitionIn: TransitionId;               // effect drawn by the page centered on beat.start (only meaningful when layout/visual changes)
-  punchIn: boolean;
+  punchIn: boolean;                         // legacy; plan.shots[].camera supersedes it
 }
+// additive: shots?: ShotPlan[] (camera, overlay, textEffect, transitionIn, caption, jev picks),
+// giants?: GiantPlan[], rhythm?: RhythmReport, captionSections?: {start,end,style}[]
 ```
 In `full` layout only templates flagged `underChin: true` may appear (drawn inside `geometry.full.visualRect`);
 any other template forces `split`. After the clean stage, `plan.source.path` is `work/clean.mp4`, so
@@ -128,7 +145,7 @@ candidate with its score, the `kept` spans (voiced audio without words that was 
 
 - **StyleFamilyId** (whole video): `apple_glass` frosted translucent cards, SF Pro, soft depth · `bold_kinetic` heavy caps, yellow/green highlights, black stroke · `terminal_type` monospace, cursor, green/amber on near-black · `neon_cyber` dark, glowing magenta/cyan outlines · `paper_editorial` cream paper, serif, ink underline, marker highlight · `clean_swiss` white/black grid, one red accent · `gradient_pop` vivid gradients, chunky rounded, playful · `dark_luxe` black + gold, thin serif, restrained
 - **AccentId**: `blue` `green` `yellow` `orange` `red` `pink` `purple` `cyan`
-- **CaptionStyleId**: `word_pop` (2–3 words, active word accent + scale) · `single_word` (one huge word) · `karaoke_line` (line shown, words fill as spoken) · `boxed_highlight` (active word on accent box) · `typewriter_line`
+- **CaptionStyleId**: `word_pop` (2–3 words, active word accent + scale) · `single_word` (one huge word) · `karaoke_line` (line shown, words fill as spoken) · `boxed_highlight` (active word on accent box) · `typewriter_line` · engine styles `anton_karaoke` · `archivo_chip` · `inter_editorial`
 - **TextEffectId**: `typewriter` `word_pop` `slide_up` `blur_in` `scramble_decode` `highlighter_swipe` `scale_punch` `mask_reveal`
 - **TransitionId**: `hard_cut` `flash` `whip_streak` `glass_wipe` `zoom_blur` `glitch_slice`
 - **TemplateId** and fields (strings short: ≤5 words unless noted):

@@ -99,6 +99,15 @@ async function captureChunk(
     await handle.request("loadFile", windowId, { path: path.resolve(filmHtmlPath) });
     await handle.request("evaluate", windowId, { source: READY_EXPR });
     await waitForFilmReady(handle, windowId);
+    if (chunkIdx === 0 && onStatus) {
+      // the film page shrinks overflowing card text itself; say so, and shout when it cannot fit
+      const found = (await handle.request("evaluate", windowId, {
+        source: "JSON.stringify(window.__filmOverflow || [])",
+      })) as string;
+      for (const o of JSON.parse(found || "[]") as Array<{ beat: string; template: string; text: string; from: number; to: number; fixed: boolean }>) {
+        onStatus(`text overflow ${o.fixed ? "fixed" : "NOT FIXED"} in ${o.beat} ${o.template}: "${o.text}" ${o.from}px -> ${o.to}px`);
+      }
+    }
     if (useDoubleRaf) await handle.request("evaluate", windowId, { source: DOUBLE_RAF_EXPR });
 
     let written = 0;

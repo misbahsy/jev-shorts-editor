@@ -197,22 +197,35 @@
     for (var i = 0; i < all.length; i++) {
       var e = all[i];
       if (!isTextBlock(e)) continue;
-      if (e.clientWidth < 8 || e.scrollWidth <= e.clientWidth + 2) continue;
-      var start = parseFloat(getComputedStyle(e).fontSize) || 0;
-      var size = start;
-      var guard = 0;
-      while (size > 14 && e.scrollWidth > e.clientWidth + 2 && guard++ < 60) {
-        size -= 2;
-        e.style.fontSize = size + "px";
+      // Decorations (a highlighter swipe, an underline) are absolutely positioned and may poke
+      // out of the box on purpose; only the text itself counts, so they are hidden while measuring.
+      var decos = [];
+      var kids = e.querySelectorAll("*");
+      for (var k = 0; k < kids.length; k++) {
+        if (getComputedStyle(kids[k]).position === "absolute") decos.push([kids[k], kids[k].style.display]);
       }
-      Film.overflow.push({
-        beat: beat.id,
-        template: beat.visual.template,
-        text: (e.textContent || "").trim().slice(0, 60),
-        from: start,
-        to: size,
-        fixed: e.scrollWidth <= e.clientWidth + 2,
-      });
+      for (var d = 0; d < decos.length; d++) decos[d][0].style.display = "none";
+      var over = function () {
+        return e.clientWidth >= 8 && e.scrollWidth > e.clientWidth + 2;
+      };
+      if (over()) {
+        var start = parseFloat(getComputedStyle(e).fontSize) || 0;
+        var size = start;
+        var guard = 0;
+        while (size > 14 && over() && guard++ < 60) {
+          size -= 2;
+          e.style.fontSize = size + "px";
+        }
+        Film.overflow.push({
+          beat: beat.id,
+          template: beat.visual.template,
+          text: (e.textContent || "").trim().slice(0, 60),
+          from: start,
+          to: size,
+          fixed: !over(),
+        });
+      }
+      for (var r = 0; r < decos.length; r++) decos[r][0].style.display = decos[r][1];
     }
   }
 
