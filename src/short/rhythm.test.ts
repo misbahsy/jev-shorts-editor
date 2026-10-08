@@ -260,3 +260,17 @@ test("captionSectionsFrom keeps the global style for the first section and cover
   assert.equal(s[1].end, 32);
   assert.deepEqual(captionSectionsFrom(undefined, "typewriter_line", 20), [{ start: 0, end: 20, style: "typewriter_line" }]);
 });
+
+test("a clip where Jev picks no giant word still gets one per GIANT_TARGET_EVERY_SEC, best supported first", () => {
+  const { shots, words } = fixture(12); // 30 s
+  const decs = shots.map(() => dec({ overlay: "none" }));
+  decs[4].overlay!.probabilities.giant_word = 0.3;
+  decs[9].overlay!.probabilities.giant_word = 0.2;
+  const r = planOverlays(shots, decs, words, 3, 30);
+  // (30 s - 3 s hook) / 14 s target = 1 giant, and b4 is the best supported shot
+  assert.deepEqual(Object.keys(r.giants), ["b4"]);
+  assert.equal(r.overlays.b4, "giant_word");
+  assert.ok(r.log.some(e => e.shotId === "b4" && /promoted/.test(e.rule)));
+  // never inside the hook, and never when the cut-out is unavailable
+  assert.ok(!Object.keys(planOverlays(shots, decs, words, 3, 30, { allowGiants: false }).giants).length);
+});

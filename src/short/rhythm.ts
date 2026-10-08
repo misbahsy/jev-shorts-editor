@@ -18,6 +18,8 @@ import type { Beat, BeatDecision, CameraId, CaptionStyleId, OverlayId, RawBeat, 
 
 export const GIANT_MIN_GAP_SEC = 8.5;
 export const GIANT_AFTER_HOOK_SEC = 1.5;
+/** A clip gets at least one giant word per this many seconds after the hook (Jev picks which shots). */
+export const GIANT_TARGET_EVERY_SEC = 14;
 /** Largest share of the speaking time that may carry a card or pill. */
 export const CARD_COVERAGE_CAP = 0.55;
 export const MAX_CHANGE_GAP_SEC = 3.05;
@@ -138,6 +140,25 @@ export function planOverlays(shots: RawBeat[], decs: BeatDecision[], words: Word
     }
   }
 
+  // 2b. the 24fps look is a signature, so a clip that runs long without one still gets the best
+  // supported shot. Jev ranks the shots; only the count is topped up.
+  const wanted = opts.allowGiants === false ? 0 : Math.floor((totalSec - hookEnd) / GIANT_TARGET_EVERY_SEC);
+  if (Object.keys(giants).length < wanted) {
+    const ranked = shots
+      .map((s, i) => ({ s, i, p: decs[i].overlay?.probabilities.giant_word ?? 0 }))
+      .filter(c => !giants[c.s.id] && c.s.start >= hookEnd + GIANT_AFTER_HOOK_SEC)
+      .sort((a, b) => b.p - a.p || a.i - b.i);
+    for (const c of ranked) {
+      if (Object.keys(giants).length >= wanted) break;
+      if (keptStarts.some(k => Math.abs(k - c.s.start) < GIANT_MIN_GAP_SEC)) continue;
+      const word = giantWordFor(c.s, decs[c.i], words);
+      if (!word) continue;
+      note(c.i, `no giant word in the first ${Math.round(c.s.start)} s of a ${Math.round(totalSec)} s clip: best supported shot promoted`, "giant_word");
+      keptStarts.push(c.s.start);
+      giants[c.s.id] = word;
+    }
+  }
+
   // 3. card density: drop the least wanted cards until the face has room, without opening a long dead run
   const isCard = (i: number) => final[i] === "card" || final[i] === "keyword_pill";
   const coverage = () => {
@@ -214,14 +235,32 @@ export interface CameraPlan {
   log: OverrideEntry[];
 }
 
+const LIFT_EPS_P = 0.01;
+const LIFT_EPS_MEAN = 0.03;
+
+/** Average Jev probability of each camera over the shots outside the hook. */
+export function meanCameraProbs(ctxs: ShotContext[], decs: BeatDecision[]): Record<string, number> {
+  const sum: Record<string, number> = {};
+  let n = 0;
+  decs.forEach((d, i) => {
+    if (ctxs[i]?.hook) return;
+    n++;
+    for (const [k, v] of Object.entries(d.camera?.probabilities ?? { base: 1 })) sum[k] = (sum[k] ?? 0) + v;
+  });
+  const out: Record<string, number> = {};
+  for (const k of Object.keys(sum)) out[k] = sum[k] / Math.max(1, n);
+  return out;
+}
+
 /**
  * Picks the final camera for every shot, in order. Jev's probabilities rank the allowed cameras;
- * the one on the previous shot is excluded (so the picture always changes), and a camera used in
+ * each is scored by its lift over the clip's average, the one on the previous shot is excluded (so the picture always changes), and a camera used in
  * the last two shots is down-weighted so the same trick does not come back every other shot.
  */
 export function planCameras(ctxs: ShotContext[], decs: BeatDecision[]): CameraPlan {
   const log: OverrideEntry[] = [];
   const cameras: CameraId[] = [];
+  const mean = meanCameraProbs(ctxs, decs);
   ctxs.forEach((c, i) => {
     const dec = decs[i];
     const jev = cameraOf(dec);
@@ -234,7 +273,9 @@ export function planCameras(ctxs: ShotContext[], decs: BeatDecision[]): CameraPl
     const mustDiffer = prev !== undefined && allowed.length > 1 && !(prevCtx && prevCtx.layout === "split");
     const recent = cameras.slice(-2);
     const score = (cam: CameraId) => {
-      let p = probs[cam] ?? 0;
+      // lift over the clip's average for this camera: a classifier that leans on "base" everywhere
+      // still tells us WHICH shots want a punch or a push relative to the rest of the clip
+      let p = ((probs[cam] ?? 0) + LIFT_EPS_P) / ((mean[cam] ?? 0) + LIFT_EPS_MEAN);
       if (mustDiffer && cam === prev) return -1;
       if (recent.includes(cam)) p *= 0.15;
       return p + (cam === "base" ? 0.0001 : 0); // stable tiebreak toward the plain camera

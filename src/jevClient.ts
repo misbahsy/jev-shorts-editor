@@ -64,7 +64,7 @@ export interface CallResult {
   retries: number;
 }
 
-const RETRYABLE_STATUS = new Set([429, 529]);
+const RETRYABLE_STATUS = new Set([429, 503, 529]);
 const MAX_TRIES = 4;
 const TIMEOUT_MS = 30_000;
 
@@ -86,7 +86,7 @@ function gatewayHint(target: JevTarget, status: number, body: string): string {
 
 /**
  * POST { state, model, questions } to the target. Retries up to
- * MAX_TRIES total attempts with exponential backoff (+ jitter) on 429/529
+ * MAX_TRIES total attempts with exponential backoff (+ jitter) on 429/503/529
  * and on network/timeout errors. Per-request timeout is 30s (aborted via
  * AbortController; counts as a retryable failure, not a hang).
  */
