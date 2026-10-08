@@ -31,7 +31,7 @@ Edit with a JSON-aware tool (`jq`, or a small node script), not by hand with sed
 | `hook` | Opening hook text behind the speaker: `endSec`, `preset`, `cutout`, `fgDir`, `fgFrames` | Edit `preset.layers[].text` and `size`. Leave the rest |
 | `sfx` | `[{type, at, gainDb}]`, `type` is `whoosh`, `pop`, `ding`, `riser` or `impact` | Edit freely: change `gainDb`, move `at`, delete entries |
 | `fx.leaks` | Output times of warm light-leak flashes | Delete entries to remove a flash |
-| `cuts` | Output times of the clean stage's cuts. Framing flips camera at each | Leave alone |
+| `cuts` | Output times of the clean stage's cuts. A `base` shot may flip to punch at each | Leave alone |
 | `loudness` | Loudness measurement fed to the final audio pass | Leave alone |
 | `clean`, `timings` | Stats from earlier stages | Ignore |
 | `rhythm`, `shots[].overrides`, `shots[].jev` | Log of what the rhythm rules changed | Read-only, see [Rhythm and overrides](#rhythm-and-overrides) |
@@ -91,11 +91,11 @@ The renderer reads `hook.preset.layers[]`, not `hook.word` or `hook.line`. Edit 
 
 ### Swap a camera
 
-Edit `shots[i].camera`. `CameraId` values: base, punch, face_closeup, push_in, drift. The renderer also flips between base and punch at each time in `cuts` when two neighbouring shots would look almost the same, and on a `split` layout it turns `push_in` and `drift` into base and `face_closeup` into punch. So the picture can differ from the named camera. Do not edit `beats[].punchIn`; it is only used by old plans that have no `shots`.
+Edit `shots[i].camera`. `CameraId` values: base, punch (1.28x snap in), face_closeup (1.5x, tighter than punch), push_in (slow zoom in), drift (slow zoom with a sideways glide). The renderer draws the named camera on both the `full` and the `split` layout; every zoom is capped so the face is never cropped. The only thing it adds is at each time in `cuts`: a `base` shot whose piece would look like the piece before it is flipped to a punch (or to base after a zoomed-in end). A shot you set to anything but `base` is never flipped. Do not edit `beats[].punchIn`; it is only used by old plans that have no `shots`.
 
 ### Change caption style
 
-`captionSections` decides the caption style at every moment; `style.captionStyle` is used only if `captionSections` is missing or empty. Edit `captionSections[].style` (for one style everywhere, set it on every section) and set `style.captionStyle` to match. `CaptionStyleId` values: word_pop, single_word, karaoke_line, boxed_highlight, typewriter_line, anton_karaoke, archivo_chip, inter_editorial. Do not change `start` or `end` of sections. `shots[].captionStyle` is not read.
+`captionSections` decides the caption style at every moment; `style.captionStyle` is used only if `captionSections` is missing or empty. A fresh plan has sections of about 6 to 12 s with 2 to 4 distinct styles, chosen from Jev's per-section probabilities. Edit `captionSections[].style` (for one style everywhere, set it on every section) and set `style.captionStyle` to match the first section. `CaptionStyleId` values: word_pop, single_word, karaoke_line, boxed_highlight, typewriter_line, anton_karaoke, archivo_chip, inter_editorial. Do not change `start` or `end` of sections. `shots[].captionStyle` is bookkeeping and is not read.
 
 ### Change style family or accent
 

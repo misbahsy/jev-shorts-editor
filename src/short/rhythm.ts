@@ -224,7 +224,6 @@ export interface ShotContext {
 /** Which cameras a shot may use, with the reason a camera was ruled out. */
 export function allowedCameras(c: ShotContext): { allowed: CameraId[]; reason: string } {
   if (c.hook) return { allowed: ["base"], reason: "hook window stays clean" };
-  if (c.layout === "split") return { allowed: ["base"], reason: "split layout keeps the speaker still" };
   if (c.card) return { allowed: ["base", "punch"], reason: "a card sits under the chin, wide moves would cover it" };
   if (c.giant) return { allowed: ["base", "punch", "face_closeup"], reason: "a moving camera would slide the giant word off the head" };
   return { allowed: CAMERAS.slice(), reason: "" };
@@ -267,10 +266,8 @@ export function planCameras(ctxs: ShotContext[], decs: BeatDecision[]): CameraPl
     const probs = dec.camera?.probabilities ?? { base: 1 };
     const { allowed, reason } = allowedCameras(c);
     const prev = cameras[i - 1];
-    const prevCtx = ctxs[i - 1];
-    // the "not twice in a row" rule only binds where the camera can actually move; a run of split
-    // shots all hold the speaker still and change through their cards instead
-    const mustDiffer = prev !== undefined && allowed.length > 1 && !(prevCtx && prevCtx.layout === "split");
+    // the "not twice in a row" rule only binds where there is more than one camera to pick from
+    const mustDiffer = prev !== undefined && allowed.length > 1;
     const recent = cameras.slice(-2);
     const score = (cam: CameraId) => {
       // lift over the clip's average for this camera: a classifier that leans on "base" everywhere
@@ -514,26 +511,93 @@ export function assembleShots(input: ShotAssemblyInput): { shots: ShotPlan[]; rh
   return { shots: out, rhythm };
 }
 
-/** Caption sections from the per-section answers; falls back to one section with the global style. */
-export function captionSectionsFrom(
-  sections: { start: number; end: number; captionStyle: { choice: CaptionStyleId } }[] | undefined,
+/** Most distinct caption styles one clip may use, so the short keeps a look instead of a sampler. */
+export const MAX_CAPTION_STYLES = 4;
+
+export interface CaptionSectionInput {
+  start: number;
+  end: number;
+  /** First shot of the section, used to name the section in the override log. */
+  firstShot?: string;
+  captionStyle: { choice: CaptionStyleId; probabilities?: Record<string, number> };
+}
+
+export interface CaptionSectionPlan {
+  sections: { start: number; end: number; style: CaptionStyleId }[];
+  log: OverrideEntry[];
+}
+
+/**
+ * Caption sections from Jev's per-section answers, chosen the same way as the cameras. A classifier
+ * that leans on one label for every section (word_pop, say) still says which section wants a
+ * different look relative to the others, so each section ranks the styles by their lift over the
+ * clip's average probability, never repeats the previous section's style, down-weights the one
+ * before that, and stops introducing new styles after MAX_CAPTION_STYLES. Section 0 keeps the
+ * global answer (it also styles the hook). Without probabilities (old decisions.json) a section
+ * keeps Jev's pick unless it equals the previous style, in which case the two are one section.
+ * Pure; every time this differs from Jev's argmax it is logged.
+ */
+export function planCaptionSections(
+  sections: CaptionSectionInput[] | undefined,
   globalStyle: CaptionStyleId,
   totalSec: number,
-): { start: number; end: number; style: CaptionStyleId }[] {
-  if (!sections || sections.length === 0) return [{ start: 0, end: totalSec, style: globalStyle }];
+): CaptionSectionPlan {
+  if (!sections || sections.length === 0) return { sections: [{ start: 0, end: totalSec, style: globalStyle }], log: [] };
+  const log: OverrideEntry[] = [];
+  const probsOf = (s: CaptionSectionInput): Record<string, number> => s.captionStyle.probabilities ?? { [s.captionStyle.choice]: 1 };
+  const mean: Record<string, number> = {};
+  for (const s of sections) for (const [k, v] of Object.entries(probsOf(s))) mean[k] = (mean[k] ?? 0) + v / sections.length;
+  const styles: CaptionStyleId[] = [];
+  sections.forEach((sec, i) => {
+    const jev = sec.captionStyle.choice;
+    const prev = styles[i - 1];
+    let pick: CaptionStyleId = i === 0 ? globalStyle : jev;
+    if (i > 0) {
+      const probs = probsOf(sec);
+      const used = new Set(styles);
+      const capped = used.size >= MAX_CAPTION_STYLES;
+      let best = -Infinity;
+      for (const [k, p] of Object.entries(probs)) {
+        const cam = k as CaptionStyleId;
+        if (cam === prev) continue;
+        if (capped && !used.has(cam)) continue;
+        let sc = (p + LIFT_EPS_P) / ((mean[k] ?? 0) + LIFT_EPS_MEAN);
+        if (styles[i - 2] === cam) sc *= 0.5;
+        if (sc > best) {
+          best = sc;
+          pick = cam;
+        }
+      }
+      if (best === -Infinity) pick = jev; // nothing else to choose from; the merge below joins it to its neighbour
+    }
+    styles.push(pick);
+    if (i > 0 && pick !== jev) {
+      const why = jev === prev ? "same caption style as the previous section" : "ranked by lift over the clip's average";
+      log.push({ shotId: sec.firstShot ?? `section${i}`, rule: why, from: jev, to: pick });
+    }
+  });
   const out = sections.map((s, i) => ({
     start: i === 0 ? 0 : s.start,
     end: i === sections.length - 1 ? Math.max(totalSec, s.end) : s.end,
-    style: i === 0 ? globalStyle : s.captionStyle.choice,
+    style: styles[i],
   }));
-  // neighbours that landed on the same style are one section (no pointless seams)
+  // neighbours that still share a style are one section (no pointless seams)
   const merged: typeof out = [];
   for (const sec of out) {
     const last = merged[merged.length - 1];
     if (last && last.style === sec.style) last.end = sec.end;
     else merged.push({ ...sec });
   }
-  return merged;
+  return { sections: merged, log };
+}
+
+/** {@link planCaptionSections} without the log. */
+export function captionSectionsFrom(
+  sections: CaptionSectionInput[] | undefined,
+  globalStyle: CaptionStyleId,
+  totalSec: number,
+): { start: number; end: number; style: CaptionStyleId }[] {
+  return planCaptionSections(sections, globalStyle, totalSec).sections;
 }
 
 /**

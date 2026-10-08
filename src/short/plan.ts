@@ -18,7 +18,7 @@ import { transcribe } from "./transcribe";
 import { perceive, type Perception } from "./perceive";
 import { decide } from "./decide";
 import { splitShots } from "./shots";
-import { applyWordCorrections, assembleShots, captionSectionsFrom, planOverlays } from "./rhythm";
+import { applyWordCorrections, assembleShots, planCaptionSections, planOverlays } from "./rhythm";
 import { assembleStructure } from "./structure";
 import { holdMerge } from "./hold";
 import { fillCopy } from "./copy";
@@ -195,6 +195,7 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
 
   // per-shot camera, overlay, transition and caption style, after the rhythm guardrails
   const totalSec = plan.beats[plan.beats.length - 1].end;
+  const captionPlan = planCaptionSections(decisions.global.sections, plan.style.captionStyle, totalSec);
   const assembled = assembleShots({
     shots,
     decs: overlayPlan.decisions,
@@ -202,11 +203,12 @@ export async function planShort(srcPath: string, workDir: string, title = "Untit
     overlay: overlayPlan,
     hookEnd,
     cuts: plan.cuts ?? [],
-    captionSections: captionSectionsFrom(decisions.global.sections, plan.style.captionStyle, totalSec),
+    captionSections: captionPlan.sections,
   });
   plan.shots = applyWordCorrections(assembled.shots, words, plan.words);
   plan.rhythm = assembled.rhythm;
-  plan.captionSections = captionSectionsFrom(decisions.global.sections, plan.style.captionStyle, totalSec);
+  plan.rhythm.overrides.push(...captionPlan.log);
+  plan.captionSections = captionPlan.sections;
   for (const b of plan.beats) b.punchIn = plan.shots.some(s => s.beatId === b.id && s.camera === "punch");
   timings.finalizeMs = Date.now() - tFinalize;
 

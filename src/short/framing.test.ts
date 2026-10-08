@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { headTopInShot, buildShots, cutTimes, fullCropRect, splitCropRect, moveRect, MOVE_RECT_JS, CUT_PUNCH_ZOOM, CLOSEUP_ZOOM, PUSH_ZOOM, type CameraMove } from "./framing";
+import { headTopInShot, buildShots, cutTimes, fullCropRect, splitCropRect, moveRect, shotBaseRect, faceSafeZoom, MOVE_RECT_JS, PUNCH_ZOOM, CUT_PUNCH_ZOOM, CLOSEUP_ZOOM, PUSH_ZOOM, DRIFT_ZOOM, FACE_FIT, type CameraMove } from "./framing";
 import { buildAudioFilter, shotFilter, moveFilter } from "./render";
 import type { ShortPlan } from "./types";
 
@@ -78,13 +78,21 @@ test("the punched crop is smaller, centered on the face and inside the frame", (
   assert.ok(faceTop > punched.y && faceBottom < punched.y + punched.h);
 });
 
-test("the split crop keeps its top edge when punched in", () => {
+test("the split crop keeps its top edge when punched in and follows the face sideways", () => {
   const p = plan([{ start: 0, end: 5, layout: "split" }], [2]);
+  // a face right of centre inside the speaker window (output px)
+  (p.geometry.split as { face: unknown }).face = { x: 640, y: 1010, w: 240, h: 240 };
   const base = splitCropRect(p, false)!;
   const punched = splitCropRect(p, true)!;
   assert.equal(punched.y, base.y);
   assert.ok(punched.w < base.w);
-  assert.ok(Math.abs(punched.x + punched.w / 2 - (base.x + base.w / 2)) <= 1);
+  assert.ok(punched.x >= base.x && punched.x + punched.w <= base.x + base.w, "stays inside the base crop");
+  // the face centre (760 of 1080) sits at 0.70 of the base crop; the zoomed window slides toward it
+  assert.ok(punched.x + punched.w / 2 > base.x + base.w / 2);
+  // a centred face keeps the window centred
+  (p.geometry.split as { face: unknown }).face = { x: 420, y: 1010, w: 240, h: 240 };
+  const centred = splitCropRect(p, true)!;
+  assert.ok(Math.abs(centred.x + centred.w / 2 - (base.x + base.w / 2)) <= 1);
 });
 
 test("audio: --no-clean plans keep the original chain, clean plans get highpass and loudnorm", () => {
@@ -147,15 +155,104 @@ test("a cut inside a moving shot restarts the move and flips when the join would
   assert.equal(moving[1].startSec, 9);
 });
 
-test("a cut between two equal static cameras flips them", () => {
-  const shots = buildShots(planWithShots([{ start: 0, end: 4, camera: "punch" }, { start: 4, end: 8, camera: "punch" }], [4]));
-  assert.deepEqual(shots.map(s => s.camera), ["punch", "base"]);
+test("a cut flips a base shot, never a camera Jev chose", () => {
+  // Jev said base, base: the cut after the first piece must still read, so the second piece punches in
+  const b = buildShots(planWithShots([{ start: 0, end: 4, camera: "base" }, { start: 4, end: 8, camera: "base" }], [4]));
+  assert.deepEqual(b.map(s => s.camera), ["base", "punch"]);
+  // Jev said punch, punch: the render keeps both (one merged shot), the cut is Jev's to leave alone
+  const p = buildShots(planWithShots([{ start: 0, end: 4, camera: "punch" }, { start: 4, end: 8, camera: "punch" }], [4]));
+  assert.deepEqual(p.map(s => s.camera), ["punch"]);
+  // base after a punch already differs at the join, so it is left as base
+  const a = buildShots(planWithShots([{ start: 0, end: 4, camera: "punch" }, { start: 4, end: 8, camera: "base" }], [4]));
+  assert.deepEqual(a.map(s => s.camera), ["punch", "base"]);
+  // a base piece that follows a zoomed-in end flips back to base, not to another punch
+  const c = buildShots(planWithShots([{ start: 0, end: 4, camera: "face_closeup" }, { start: 4, end: 8, camera: "base" }], [4]));
+  assert.deepEqual(c.map(s => s.camera), ["face_closeup", "base"]);
 });
 
-test("split layouts never animate and never close up", () => {
-  const shots = buildShots(planWithShots([{ start: 0, end: 3, camera: "push_in", layout: "split" }, { start: 3, end: 6, camera: "face_closeup", layout: "split" }]));
-  assert.ok(shots.every(s => s.move === null));
-  assert.equal(shots[0].camera, "base");
+test("every camera Jev picks is the camera that renders, on the full layout", () => {
+  const cams = ["base", "punch", "face_closeup", "push_in", "drift", "punch", "base"];
+  const shots = buildShots(planWithShots(cams.map((camera, i) => ({ start: i * 3, end: i * 3 + 3, camera }))));
+  assert.deepEqual(shots.map(s => s.camera), cams);
+});
+
+test("punch is clearly stronger than before and the close-up is tighter than punch", () => {
+  assert.ok(PUNCH_ZOOM >= 1.25 && PUNCH_ZOOM <= 1.3, `punch ${PUNCH_ZOOM}`);
+  assert.ok(CLOSEUP_ZOOM >= PUNCH_ZOOM + 0.15, `closeup ${CLOSEUP_ZOOM}`);
+  const [punch, close] = buildShots(planWithShots([{ start: 0, end: 3, camera: "punch" }, { start: 3, end: 6, camera: "face_closeup" }]));
+  assert.ok(punch.zoom >= 1.25);
+  assert.ok(close.zoom > punch.zoom);
+  assert.ok(fullCropRect(planWithShots([{ start: 0, end: 3, camera: "punch" }]), close.zoom).w < fullCropRect(planWithShots([{ start: 0, end: 3, camera: "punch" }]), punch.zoom).w);
+});
+
+test("faceSafeZoom caps a zoom so the face keeps FACE_FIT of room, on both layouts", () => {
+  const p = plan([{ start: 0, end: 5 }]);
+  // full: face 192 x 216 source px in a 608 x 1080 crop -> a 5x zoom would crop it, so it is capped
+  const full = faceSafeZoom(p, "full", 5);
+  assert.ok(full < 5 && full > 1);
+  assert.ok(192 * FACE_FIT * full <= 608 + 1e-6 && 216 * FACE_FIT * full <= 1080 + 1e-6);
+  assert.equal(faceSafeZoom(p, "full", 1.1), 1.1, "a small zoom is untouched");
+  // split: a 240 px face in a 1080 px speaker window
+  (p.geometry.split as { face: unknown }).face = { x: 420, y: 1010, w: 240, h: 240 };
+  const split = faceSafeZoom(p, "split", 9);
+  assert.ok(split < 9 && split >= 1);
+  assert.ok(240 * FACE_FIT * split <= 1080 + 1e-6);
+  // no detected face: nothing to protect, nothing capped
+  const bare = plan([{ start: 0, end: 5 }]);
+  (bare.geometry.full as { face: unknown }).face = { x: 0, y: 0, w: 0, h: 0 };
+  assert.equal(faceSafeZoom(bare, "full", 2.5), 2.5);
+});
+
+test("every zoom keeps the face inside the view (full layout)", () => {
+  const p = planWithShots([
+    { start: 0, end: 3, camera: "punch" }, { start: 3, end: 6, camera: "face_closeup" },
+    { start: 6, end: 9, camera: "push_in" }, { start: 9, end: 12, camera: "drift" },
+  ]);
+  const f = p.perception.face;
+  const fx = f.x * 1920, fy = f.y * 1080, fw = f.w * 1920, fh = f.h * 1080;
+  for (const shot of buildShots(p)) {
+    for (const prog of shot.move ? [0, 0.5, 1] : [0]) {
+      const r = shot.move ? moveRect(p.geometry.full.crop, shot.move, prog) : shotBaseRect(p, shot)!;
+      // the drift glides sideways by design; the face may touch a side but must be inside the view then too
+      assert.ok(fy >= r.y && fy + fh <= r.y + r.h, `${shot.camera}@${prog} face top/bottom inside`);
+      assert.ok(fx + fw / 2 >= r.x && fx + fw / 2 <= r.x + r.w, `${shot.camera}@${prog} face centre inside`);
+    }
+  }
+});
+
+test("split layouts honour face_closeup, punch, push_in and drift", () => {
+  const split = (camera: string, start: number) => ({ start, end: start + 3, camera, layout: "split" as const });
+  const p = planWithShots([split("push_in", 0), split("face_closeup", 3), split("drift", 6), split("punch", 9), split("base", 12)]);
+  const shots = buildShots(p);
+  assert.deepEqual(shots.map(s => s.camera), ["push_in", "face_closeup", "drift", "punch", "base"]);
+  assert.ok(shots[0].move && shots[0].move.z1 > shots[0].move.z0);
+  assert.ok(shots[0].move!.ay0 === 0 && shots[0].move!.ay1 === 0, "the split zoom holds the top edge");
+  assert.ok(shots[2].move && shots[2].move.ax1 > shots[2].move.ax0, "drift glides sideways");
+  assert.equal(shots[1].move, null);
+  assert.ok(shots[1].zoom > shots[3].zoom && shots[3].zoom >= 1.2, "closeup tighter than punch");
+  assert.equal(shots[4].zoom, 1);
+  // static zooms crop a smaller window of the split crop; moving ones cut from the whole crop
+  const base = (p.geometry.split as { crop: { w: number } }).crop;
+  assert.ok(shotBaseRect(p, shots[1])!.w < shotBaseRect(p, shots[3])!.w);
+  assert.ok(shotBaseRect(p, shots[3])!.w < base.w);
+  assert.deepEqual(shotBaseRect(p, shots[0]), (p.geometry.split as { crop: unknown }).crop);
+  assert.ok(Math.abs(DRIFT_ZOOM[1] - PUSH_ZOOM[1]) < 0.1);
+});
+
+test("a split layout with no geometry crop stays a bare base shot", () => {
+  const p = planWithShots([{ start: 0, end: 3, camera: "push_in", layout: "split" }, { start: 3, end: 6, camera: "face_closeup", layout: "split" }]);
+  delete (p.geometry.split as { crop?: unknown }).crop;
+  const shots = buildShots(p);
+  assert.ok(shots.every(s => s.move === null && s.camera === "base" && s.zoom === 1));
+});
+
+test("the ffmpeg filter for a moving split camera scales per frame, crops 1080 square and pads under the panel", () => {
+  const p = planWithShots([{ start: 2, end: 5, camera: "push_in", layout: "split" }]);
+  const [shot] = buildShots(p);
+  const f = shotFilter(shot, p, 0);
+  assert.match(f, /eval=frame/);
+  assert.match(f, /crop=1080:1080:x='/);
+  assert.match(f, /pad=1080:1920:0:840:0x0b0b0f\[/);
 });
 
 test("moveRect holds the anchor point fixed on screen while the zoom grows", () => {
@@ -198,15 +295,15 @@ test("plans without plan.shots still frame from beat.punchIn", () => {
   assert.equal(b.camera, "punch");
 });
 
-test("headTopInShot: a close-up puts the hair lower on screen than the base framing", () => {
+test("headTopInShot: a close-up re-frames the hair and stays on screen", () => {
   const p = plan([{ start: 0, end: 4 }]);
   const base = buildShots(p)[0];
   const close = { ...base, zoom: CLOSEUP_ZOOM, move: null };
   const a = headTopInShot(p, { ...base, zoom: 1, move: null });
   const b = headTopInShot(p, close);
   assert.ok(a !== null && b !== null);
-  assert.ok(b! > a!, `closeup ${b} should sit lower than base ${a}`);
-  assert.ok(a! >= 0.04 && b! <= 0.5);
+  assert.notEqual(a, b, "a different camera places the hair differently");
+  assert.ok(a! >= 0.04 && a! <= 0.5 && b! >= 0.04 && b! <= 0.5);
   // no detected face, no answer
   const noFace = { ...p, geometry: { ...p.geometry, full: { ...p.geometry.full, face: { x: 0, y: 0, w: 0, h: 0 } } } } as ShortPlan;
   assert.equal(headTopInShot(noFace, base), null);

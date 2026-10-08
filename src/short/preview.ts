@@ -32,7 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ShortPlan } from "./types";
-import { MOVE_RECT_JS, buildShots, fullCropRect, splitCropRect } from "./framing";
+import { MOVE_RECT_JS, buildShots, shotBaseRect } from "./framing";
 
 function parseArgs(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {};
@@ -105,7 +105,7 @@ export function buildPreview(planPath: string, filmPath: string, srcPath: string
     start: s.startSec,
     end: s.endSec,
     layout: s.layout,
-    crop: s.layout === "split" ? splitCropRect(plan, s.zoom) : s.move ? plan.geometry.full.crop : fullCropRect(plan, s.zoom),
+    crop: shotBaseRect(plan, s),
     // a moving camera (push_in, drift): the crop above is its base rect, the view is moveRect(crop, move, p)
     move: s.move,
   }));

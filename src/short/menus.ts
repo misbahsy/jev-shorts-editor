@@ -39,7 +39,7 @@ export const ACCENT_MENU: Record<string, string> = {
 };
 
 export const CAPTION_STYLE_MENU: Record<string, string> = {
-  word_pop: "2-3 heavy outlined words at a time; the spoken word snaps up in accent colour with a glow — punchy, the short-form default.",
+  word_pop: "2-3 heavy outlined words at a time; the spoken word snaps up in accent colour with a glow — punchy and compact.",
   single_word: "One huge outlined word on screen at a time, punching in with each spoken word — maximal emphasis, very high energy.",
   karaoke_line: "The whole line is on screen, upcoming words held back in grey while an accent bar swipes under each word as it is spoken — readable, calmer pacing.",
   boxed_highlight: "The spoken word sits in a glowing accent gradient pill inside the line — bold, high-contrast, brand-forward.",
@@ -84,8 +84,8 @@ export const TRANSITION_MENU: Record<string, string> = {
  */
 export const CAMERA_MENU: Record<string, string> = {
   base: "Steady medium framing of the speaker. The line explains, describes or walks through a detail in an even tone, with nothing special to underline.",
-  punch: "A quick snap in to about one tenth closer. The line lands a key claim, a number, a punchline or a bold verdict that deserves emphasis.",
-  face_closeup: "A tight close-up on the speaker's face, filling the frame. The line is personal, confessional, serious or emotional, or speaks straight to the viewer (you, your, I think, honestly).",
+  punch: "A quick snap in to about a quarter closer, a clearly tighter frame that still shows the whole face. The line lands a key claim, a number, a punchline or a bold verdict that deserves emphasis.",
+  face_closeup: "A very tight close-up, about half again closer than normal, with the face filling the frame. The line is personal, confessional, serious or emotional, or speaks straight to the viewer (you, your, I think, honestly).",
   push_in: "A slow steady zoom toward the face across the whole shot. The line builds toward a point, tells a story that is ramping up, or sets up something the next line pays off.",
   drift: "A slow sideways glide with a slight zoom. The line is reflective, relaxed or scene-setting, a thoughtful aside that gives the picture a gentle sense of motion.",
 };

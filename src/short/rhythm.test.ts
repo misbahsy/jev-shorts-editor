@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyWordCorrections,
   planOverlays, planCameras, allowedCameras, changeEvents, maxChangeGap, planShotTransitions, assembleShots,
-  captionSectionsFrom, giantWordFor, GIANT_MIN_GAP_SEC, type ShotContext, type EventShot,
+  captionSectionsFrom, planCaptionSections, MAX_CAPTION_STYLES, giantWordFor, GIANT_MIN_GAP_SEC, type ShotContext, type EventShot,
 } from "./rhythm";
 import { holdMerge, MAX_HOLD_SPLIT_SEC, MAX_HOLD_UNDER_CHIN_SEC } from "./hold";
 import type { Beat, BeatDecision, CameraId, Decisions, OverlayId, RawBeat, ShotPlan, TemplateId, Word } from "./types";
@@ -130,16 +130,23 @@ test("the same camera never plays on two shots in a row", () => {
   assert.ok(r.log.every(e => e.from !== e.to));
 });
 
-test("hook shots, split shots and giant shots restrict the camera; cards allow only base or punch", () => {
+test("hook shots and giant shots restrict the camera; cards allow only base or punch; split shots allow every camera", () => {
   assert.deepEqual(allowedCameras(ctx("a", 0, { hook: true })).allowed, ["base"]);
-  assert.deepEqual(allowedCameras(ctx("a", 0, { layout: "split" })).allowed, ["base"]);
+  assert.deepEqual([...allowedCameras(ctx("a", 0, { layout: "split" })).allowed].sort(), ["base", "drift", "face_closeup", "punch", "push_in"]);
   assert.deepEqual(allowedCameras(ctx("a", 0, { card: true })).allowed, ["base", "punch"]);
   assert.ok(!allowedCameras(ctx("a", 0, { giant: true })).allowed.includes("push_in"));
   assert.ok(allowedCameras(ctx("a", 0)).allowed.includes("drift"));
   const r = planCameras([ctx("a", 0, { hook: true }), ctx("b", 2.5, { card: true })], [dec({ camera: "push_in" }), dec({ camera: "drift" })]);
-  assert.deepEqual(r.cameras, ["base", "base"].map((c, i) => (i === 1 ? r.cameras[1] : c)));
+  assert.equal(r.cameras[0], "base");
   assert.ok(["base", "punch"].includes(r.cameras[1]));
   assert.equal(r.log.length, 2);
+});
+
+test("a split shot keeps the camera Jev picked", () => {
+  const ctxs = [ctx("a", 0, { layout: "split" }), ctx("b", 2.5, { layout: "split" }), ctx("c", 5, { layout: "split" })];
+  const r = planCameras(ctxs, [dec({ camera: "push_in" }), dec({ camera: "face_closeup" }), dec({ camera: "drift" })]);
+  assert.deepEqual(r.cameras, ["push_in", "face_closeup", "drift"]);
+  assert.equal(r.log.length, 0);
 });
 
 test("a camera used in the last two shots is down-weighted, so a run varies", () => {
@@ -277,6 +284,67 @@ test("captionSectionsFrom merges neighbouring sections that chose the same style
     { start: 0, end: 20, style: "word_pop" },
     { start: 20, end: 40, style: "single_word" },
   ]);
+});
+
+// ---- caption section variety ----
+
+/** A section whose Jev answer is `pick` with `rest` as the other probabilities. */
+const csec = (i: number, pick: string, rest: Record<string, number> = {}) => ({
+  start: i * 8, end: (i + 1) * 8, firstShot: `s${i}`,
+  captionStyle: { choice: pick as never, probabilities: { [pick]: 0.5, ...rest } as never },
+});
+
+test("planCaptionSections: Jev picks word_pop everywhere, the runner-ups make the sections differ", () => {
+  const secs = [
+    csec(0, "word_pop", { karaoke_line: 0.3, inter_editorial: 0.1 }),
+    csec(1, "word_pop", { karaoke_line: 0.1, inter_editorial: 0.3 }),
+    csec(2, "word_pop", { karaoke_line: 0.3, archivo_chip: 0.2 }),
+    csec(3, "word_pop", { archivo_chip: 0.3, inter_editorial: 0.1 }),
+    csec(4, "word_pop", { karaoke_line: 0.25, inter_editorial: 0.2 }),
+  ];
+  const r = planCaptionSections(secs, "word_pop", 40);
+  const styles = r.sections.map(x => x.style);
+  assert.equal(styles[0], "word_pop", "the first section is the plan's global style");
+  for (let i = 1; i < styles.length; i++) assert.notEqual(styles[i], styles[i - 1], "no two neighbours share a style");
+  const distinct = new Set(styles);
+  assert.ok(distinct.size >= 2 && distinct.size <= MAX_CAPTION_STYLES, [...distinct].join());
+  // every style chosen is one Jev gave probability to for that section
+  r.sections.forEach((sec, i) => assert.ok((secs[i].captionStyle.probabilities as Record<string, number>)[sec.style] > 0));
+  // the sections tile the clip
+  assert.equal(r.sections[0].start, 0);
+  assert.equal(r.sections[r.sections.length - 1].end, 40);
+  for (let i = 1; i < r.sections.length; i++) assert.equal(r.sections[i].start, r.sections[i - 1].end);
+  // each change from Jev's own argmax is logged, with the section's first shot
+  assert.ok(r.log.length >= 1);
+  assert.ok(r.log.every(e => e.from === "word_pop" && e.to !== "word_pop" && /^s\d$/.test(e.shotId)));
+});
+
+test("planCaptionSections never uses more than MAX_CAPTION_STYLES distinct styles", () => {
+  const names = ["word_pop", "karaoke_line", "single_word", "typewriter_line", "anton_karaoke", "archivo_chip", "inter_editorial"];
+  const secs = Array.from({ length: 12 }, (_, i) => {
+    const rest: Record<string, number> = {};
+    names.forEach((n, k) => { rest[n] = ((i * 3 + k * 5) % 7) / 20 + 0.02; });
+    return csec(i, names[i % names.length], rest);
+  });
+  const r = planCaptionSections(secs, "word_pop", 96);
+  assert.ok(new Set(r.sections.map(x => x.style)).size <= MAX_CAPTION_STYLES);
+});
+
+test("planCaptionSections is deterministic and keeps Jev's pick when it already varies", () => {
+  const secs = [csec(0, "word_pop", { karaoke_line: 0.2 }), csec(1, "karaoke_line", { word_pop: 0.2 }), csec(2, "word_pop", { karaoke_line: 0.2 })];
+  const a = planCaptionSections(secs, "word_pop", 24);
+  assert.deepEqual(a, planCaptionSections(secs, "word_pop", 24));
+  assert.deepEqual(a.sections.map(x => x.style), ["word_pop", "karaoke_line", "word_pop"]);
+  assert.equal(a.log.length, 0, "nothing was changed, nothing is logged");
+});
+
+test("planCaptionSections falls back to Jev's pick when the answer has no probabilities", () => {
+  const r = planCaptionSections([
+    { start: 0, end: 10, captionStyle: { choice: "karaoke_line" } },
+    { start: 10, end: 20, captionStyle: { choice: "single_word" } },
+    { start: 20, end: 30, captionStyle: { choice: "single_word" } },
+  ], "word_pop", 30);
+  assert.deepEqual(r.sections, [{ start: 0, end: 10, style: "word_pop" }, { start: 10, end: 30, style: "single_word" }]);
 });
 
 test("a clip where Jev picks no giant word still gets one per GIANT_TARGET_EVERY_SEC, best supported first", () => {

@@ -26,8 +26,8 @@ import { splitShots } from "./shots";
 import type { Word, Perception, GlobalDecisions, BeatDecision, Decisions, JevStats, RawBeat, SectionDecision, TemplateId } from "./types";
 
 /** Roughly how long one caption-style section runs. Boundaries land on a shot that ends a sentence. */
-export const SECTION_TARGET_SEC = 13;
-export const SECTION_MAX_SEC = 19;
+export const SECTION_TARGET_SEC = 8;
+export const SECTION_MAX_SEC = 12;
 
 const MIN_BEAT_SEC = 1.2;
 const MAX_BEAT_SEC = 5.0;

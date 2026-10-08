@@ -44,11 +44,18 @@ Two speaker layouts, hard-switched in ffmpeg; the film page draws everything els
   `captionY` = center of the caption band, placed below the chin (face bottom + margin), never above 1580.
 - `punchIn` on a beat is legacy and only kept for plans without `plan.shots`.
 - Camera: `plan.shots` is the fine-grained layer (a shot is about 2 to 3 s, cut by `shots.ts` at natural
-  pauses). Each shot carries a `camera`: `base`, `punch` (1.12 hard cut), `face_closeup` (1.22), `push_in`
-  (slow zoom in) or `drift` (slow pan). `framing.ts` `moveRect` is the single definition of the moving
-  crop; render.ts feeds it to ffmpeg (`scale eval=frame` plus `crop` on shot-local time) and preview.ts
-  embeds the same function, so both show the same framing. The face stays inside the crop. A `split`
-  shot never animates.
+  pauses). Each shot carries a `camera` and the renderer draws exactly that camera, on `full` and on
+  `split` alike: `base`, `punch` (1.28 hard cut), `face_closeup` (1.5 hard cut, tighter than punch),
+  `push_in` (slow zoom 1.0 to 1.16) or `drift` (zoom 1.08 to 1.16 with a sideways glide). Every zoom is
+  capped by `framing.ts` `faceSafeZoom` so the face keeps `FACE_FIT` (1.25x) of room and is never cropped.
+  The one place the renderer picks a camera of its own is the cut flip: a `base` shot that starts at a
+  clean-stage cut (or has one inside it) and would look like the piece before it becomes a `punch`
+  (or `base` after a zoomed-in end). Shots Jev gave another camera keep it. Plans without `plan.shots`
+  flip every piece. On `split` the zoom keeps the crop's top edge (headroom above the hair) and slides
+  toward the face; moving cameras cut from the whole split crop and are padded back under the panel.
+  `framing.ts` `moveRect` is the single definition of the moving crop; render.ts feeds it to ffmpeg
+  (`scale eval=frame` plus `crop` on shot-local time) and preview.ts embeds the same function, so both
+  show the same framing. `shotBaseRect` is the rectangle a shot is cut from.
 - Rhythm: `rhythm.ts` runs after Jev answers and enforces a visible change at least every 3 s, no
   repeated camera, a card density cap, at most one giant word per 8 to 10 s (and a floor on long clips)
   and a clean hook window. Every override is logged in `plan.rhythm.overrides` with the rule name and
@@ -58,7 +65,13 @@ Two speaker layouts, hard-switched in ffmpeg; the film page draws everything els
   `plan.giants` lists them. The hook and giants use the vendored 24fps engine layer (`film/hook24.js`).
 - Caption sections: `plan.captionSections` lets the caption style change at section boundaries (all 8
   styles are on the menu). `FilmCaptions.styleAt(plan, t)` picks the style; engine styles
-  (`anton_karaoke`, `archivo_chip`, `inter_editorial`) are mounted by `hook24.js`.
+  (`anton_karaoke`, `archivo_chip`, `inter_editorial`) are mounted by `hook24.js`. Jev answers the
+  caption question once per section of about 8 s (12 s at most, `decide.ts`). `rhythm.ts`
+  `planCaptionSections` turns the answers into `captionSections`: section 0 is `style.captionStyle`,
+  later sections take the style with the highest lift over its clip-wide average probability, never the
+  previous section's style, and at most `MAX_CAPTION_STYLES` (4) distinct styles per clip. Changes from
+  Jev's own top pick are logged in `plan.rhythm.overrides`. `shots[].captionStyle` is bookkeeping
+  (the section's style at the shot's start); the renderer reads only `captionSections`.
 - Text safety: after the page is built, `core.js` measures every card's text at 75% of its hold and
   shrinks any text that overflows its box. The renderer prints `text overflow fixed` or
   `text overflow NOT FIXED` for each case (`window.__filmOverflow`).

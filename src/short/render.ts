@@ -26,7 +26,7 @@ import { resolveSfxAssets, type SfxType } from "../render/sfx";
 import type { ShortPlan } from "./types";
 import { loudnormPass2, HIGHPASS_HZ } from "./clean/ffmpegTools";
 import type { LoudnormMeasure } from "./clean/types";
-import { buildShots, fullCropRect, splitCropRect, type CameraMove, type Shot } from "./framing";
+import { buildShots, fullCropRect, splitCropRect, shotBaseRect, type CameraMove, type Shot } from "./framing";
 
 export { buildShots, fullCropRect };
 
@@ -153,7 +153,7 @@ export async function captureFrames(
 const num = (v: number) => String(Math.round(v * 1e6) / 1e6);
 
 /**
- * ffmpeg chain for a moving camera (push_in, drift) on the full layout: crop to the base rect, scale
+ * ffmpeg chain for a moving camera (push_in, drift): crop to the layout's base rect, scale
  * up by Z(t) per frame, then crop the fixed output window out of the enlarged picture. The window
  * offset is anchor * (scaled size - output size), which holds the anchor point still on screen
  * while the zoom grows, the same geometry as framing.ts moveRect. `t` restarts at 0 for every
@@ -161,24 +161,27 @@ const num = (v: number) => String(Math.round(v * 1e6) / 1e6);
  */
 export function moveFilter(plan: ShortPlan, shot: Shot): string {
   const m = shot.move as CameraMove;
-  const base = plan.geometry.full.crop;
+  const base = shotBaseRect(plan, shot) as NonNullable<ReturnType<typeof shotBaseRect>>;
+  // the full layout fills the frame; the split layout's speaker region is the square 1080x1080 under the panel
+  const OUT_H_SHOT = shot.layout === "split" ? 1080 : OUT_H;
   const dur = Math.max(1 / 30, shot.endSec - shot.startSec);
   const p = `clip(t/${num(dur)},0,1)`;
   const z = `(${num(m.z0)}+${num(m.z1 - m.z0)}*${p})`;
   const sw = `trunc(${OUT_W}*${z}/2)*2`;
-  const sh = `trunc(${OUT_H}*${z}/2)*2`;
+  const sh = `trunc(${OUT_H_SHOT}*${z}/2)*2`;
   const ax = `(${num(m.ax0)}+${num(m.ax1 - m.ax0)}*${p})`;
   const ay = `(${num(m.ay0)}+${num(m.ay1 - m.ay0)}*${p})`;
   return (
     `crop=${base.w}:${base.h}:${base.x}:${base.y},` +
     `scale=w='${sw}':h='${sh}':eval=frame:flags=bicubic,` +
-    `crop=${OUT_W}:${OUT_H}:x='${ax}*(${sw}-${OUT_W})':y='${ay}*(${sh}-${OUT_H})'`
+    `crop=${OUT_W}:${OUT_H_SHOT}:x='${ax}*(${sw}-${OUT_W})':y='${ay}*(${sh}-${OUT_H_SHOT})'`
   );
 }
 
 export function shotFilter(shot: Shot, plan: ShortPlan, idx: number): string {
   const label = `s${idx}`;
   const head = `[0:v]trim=start=${shot.startSec}:end=${shot.endSec},setpts=PTS-STARTPTS,`;
+  if (shot.layout === "split" && shot.move) return `${head}${moveFilter(plan, shot)},pad=1080:1920:0:840:0x0b0b0f[${label}]`;
   if (shot.layout === "split") {
     const c = splitCropRect(plan, shot.zoom);
     const crop = c ? `crop=${c.w}:${c.h}:${c.x}:${c.y},` : "";
