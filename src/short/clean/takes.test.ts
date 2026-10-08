@@ -178,9 +178,26 @@ test("an earlier phrasing with few words in common by ratio, but most of the lat
   const w = script("Claude just completely killed all video editors forever with Opus 5.5. With Opus 5.5, video editors are finished. You see this video, it is all edited by Claude and nobody touched a timeline at any point during the whole edit, which still amazes me every single time.");
   const r = guardProposals({ words: w, alreadyRemoved: new Set(), proposals: [{ from: 0, to: 10, reason: "alternate phrasing" }] });
   assert.equal(r.decisions[0].accepted, true, r.decisions[0].rejected);
-  // the later phrasing is the last take and stays, even when the model asks for it
-  const later = guardProposals({ words: w, alreadyRemoved: new Set(), proposals: [{ from: 11, to: 17, reason: "alternate phrasing" }] });
-  assert.equal(later.decisions[0].accepted, false);
+});
+
+test("the later phrasing may go only when the earlier sentence is at least as full", () => {
+  const tail = " You see this video, it is all edited by Claude and nobody touched a timeline at any point during the whole edit, which still amazes me every single time.";
+  // the earlier sentence is the fuller one, so the model may drop the later phrasing (the real opener case)
+  const fuller = script("Claude just completely killed all video editors forever with Opus 5.5. With Opus 5.5, video editors are finished." + tail);
+  const ok = guardProposals({ words: fuller, alreadyRemoved: new Set(), proposals: [{ from: 11, to: 17, reason: "alternate phrasing" }] });
+  assert.equal(ok.decisions[0].accepted, true, ok.decisions[0].rejected);
+  // the earlier sentence is a stub of the later one: the finished take stays
+  const stub = script("Opus 5.5, video editors. Claude just completely killed all video editors forever with Opus 5.5, so nobody needs them." + tail);
+  const no = guardProposals({ words: stub, alreadyRemoved: new Set(), proposals: [{ from: 4, to: 17, reason: "alternate phrasing" }] });
+  assert.equal(no.decisions[0].accepted, false);
+});
+
+test("the opener as the model proposed it: the later phrasing is dropped, the fuller earlier one stays", () => {
+  const w = script(OPENER);
+  const jev = new Set<number>([0, 1, 2, 3, 4, 13, 14, 15, 16, 17]);
+  const r = guardProposals({ words: w, alreadyRemoved: jev, proposals: [{ from: 18, to: 25, reason: "alternate phrasing" }] });
+  assert.equal(r.decisions[0].accepted, true, r.decisions[0].rejected);
+  assert.ok(r.drops.has(18) && !r.drops.has(5));
 });
 
 test("the opener: with both phrasings proposed, only one is dropped", () => {
@@ -195,7 +212,7 @@ test("the opener: with both phrasings proposed, only one is dropped", () => {
     ],
   });
   assert.equal(r.decisions.filter(d => d.accepted).length, 1);
-  assert.ok(r.drops.has(5) && !r.drops.has(18));
+  assert.ok(r.drops.has(18) && !r.drops.has(5), "later drops are judged first, so the later phrasing goes and the earlier one stays");
 });
 
 test("a claim followed by its consequence is not an alternate take", () => {

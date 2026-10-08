@@ -144,7 +144,7 @@ const MAX_PARTNER_WORDS = 20;
  * different words ("Claude just killed video editors with Opus 5.5." then "With Opus 5.5, you
  * don't need video editors."). Believed only when the range is a whole sentence and a surviving
  * sentence after it (nothing or one short sentence between, within TAKES_ALT_WINDOW_SEC) shares
- * most of its content words. Only the earlier phrasing can go, as with any retake: the last take stays. A list, or a claim followed by its consequence, shares too little.
+ * most of its content words. The later phrasing may go only when the earlier sentence is at least as full. A list, or a claim followed by its consequence, shares too little.
  */
 function alternateTake(words: Word[], removed: ReadonlySet<number>, phraseOf: Map<number, Phrase>, from: number, to: number): string | undefined {
   const last = words.length - 1;
@@ -154,11 +154,14 @@ function alternateTake(words: Word[], removed: ReadonlySet<number>, phraseOf: Ma
   const mine = new Set(contentTokens(words, from, to));
   if (mine.size === 0) return undefined;
   const survivors = (a: number, b: number) => { const o: number[] = []; for (let i = a; i <= b; i++) if (!removed.has(i)) o.push(i); return o; };
-  const judge = (partner: number[], gapWords: number, gapSec: number): boolean => {
+  const judge = (partner: number[], gapWords: number, gapSec: number, partnerMustBeFuller = false): boolean => {
     if (partner.length === 0 || gapWords > TAKES_ALT_MAX_BETWEEN_WORDS || gapSec > TAKES_ALT_WINDOW_SEC) return false;
     const theirs = new Set<string>();
     for (const i of partner) for (const t of contentTokens(words, i, i)) theirs.add(t);
     if (theirs.size === 0) return false;
+    // dropping the LATER phrasing is only safe when the sentence that stays is at least as full,
+    // so an abandoned stub is never kept in place of the finished take
+    if (partnerMustBeFuller && theirs.size < mine.size) return false;
     const shared = [...mine].filter(t => theirs.has(t)).length;
     return shared >= TAKES_ALT_MIN_SHARED && shared / Math.min(mine.size, theirs.size) > 0.5;
   };
@@ -170,6 +173,19 @@ function alternateTake(words: Word[], removed: ReadonlySet<number>, phraseOf: Ma
     const part: number[] = [];
     for (const i of after) { if (i < s) continue; part.push(i); if (endsSentence(i) || part.length >= MAX_PARTNER_WORDS) break; }
     if (judge(part, between, words[s].start - words[to].end)) return "alternate take of the sentence after it";
+  }
+  // the surviving sentence before the range (the later phrasing goes, the fuller earlier one stays)
+  const before = survivors(Math.max(0, from - RETAKE_WINDOW_WORDS), from - 1);
+  if (before.length) {
+    const e = before[before.length - 1];
+    const between = survivors(e + 1, from - 1).length;
+    const part: number[] = [];
+    for (let k = before.length - 1; k >= 0; k--) {
+      const i = before[k];
+      part.unshift(i);
+      if (startsSentence(i) || part.length >= MAX_PARTNER_WORDS) break;
+    }
+    if (judge(part, between, words[from].start - words[e].end, true)) return "alternate take of the sentence before it";
   }
   return undefined;
 }
