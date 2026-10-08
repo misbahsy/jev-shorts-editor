@@ -75,10 +75,11 @@ Write to a new output name so the user can compare. Read `references/plan.md` be
 | What's wrong | Fix |
 |---|---|
 | A caption word is misspelled (names, products) | Fix its `text` in `plan.words`, then re-render from the plan |
-| A card or hook says something off | Edit that shot's text fields in the plan, then re-render |
+| A card says something off | Edit that beat's `visual.fields`, or set `visual` to null to drop the card |
+| A giant word or the hook word is wrong | Edit the `text` in `giants[].preset.layers` or `hook.preset.layers` (the renderer reads only those). Lower `size` if the new word is longer |
 | A retake survived, or a good line was cut | The clean stage made that call. Look at `<work>/clean.json` (cuts and the reason for each) and tell the user what it kept and dropped. Rerun from the clip with `--no-clean` if they'd rather keep everything |
 | Too long for the platform | Rerun from the clip; long talks need trimming before the edit (pick the segment with the user, cut it with ffmpeg, run on that) |
-| Style or caption look not to taste | Edit `plan.style` (family, accent, captionStyle) and re-render |
+| Style or caption look not to taste | Edit `plan.style.family` or `accent`. Caption looks come from `captionSections[].style`, not `style.captionStyle` |
 | Pipeline error | Read `log:`, fix the cause (often a missing tool or key), rerun |
 
 After a fix, run verify again on the new file.
