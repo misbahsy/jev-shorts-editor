@@ -113,3 +113,61 @@ test("snapped word times follow the sound, stay ordered, and never collapse", ()
   assert.ok(s2[1].start >= s2[0].end - 1e-9);
   assert.ok(s2.every(x => x.end - x.start >= 0.04 - 1e-9));
 });
+
+/**
+ * "Opus 5.5" said as "five point five": three syllables with soft stretches between them. The
+ * numbers follow the real clip (source 18.4-19.8 s), where the stretches are 70 to 110 ms.
+ */
+function fivePointFive(): { e: number[]; words: Word[] } {
+  const e = env(21, [[18.4, 18.78, -28], [18.9, 19.09, -27], [19.19, 19.32, -30], [19.45, 19.8, -28], [20.1, 20.4, -28]]);
+  // the stretches are not digital silence: they dip to -70 like the real recording
+  for (let i = 1909; i < 1919; i++) e[i] = -72;
+  for (let i = 1932; i < 1945; i++) e[i] = -70;
+  const words: Word[] = [
+    { i: 0, text: "Opus", start: 18.4, end: 18.72 },
+    { i: 1, text: "5.5.", start: 18.96, end: 19.68 },
+    { i: 2, text: "You", start: 20.0, end: 20.5 },
+  ];
+  return { e, words };
+}
+
+test("a long word keeps its soft syllables: the edges cover all of 'five point five'", () => {
+  const { e, words } = fivePointFive();
+  const edges = wordEdges(e, words, 21);
+  assert.ok(near(edges[1].onset.t, 18.9), `onset ${edges[1].onset.t}`);
+  assert.ok(near(edges[1].offset.t, 19.8), `offset ${edges[1].offset.t}`);
+  // the neighbours are not touched
+  assert.ok(near(edges[0].offset.t, 18.78), `Opus offset ${edges[0].offset.t}`);
+  assert.ok(near(edges[2].onset.t, 20.1), `You onset ${edges[2].onset.t}`);
+});
+
+test("the word's early syllables survive the snap to sound edges, so captions match the audio", () => {
+  const { e, words } = fivePointFive();
+  const snapped = snapWordsToEdges(words, wordEdges(e, words, 21));
+  assert.ok(near(snapped[1].start, 18.9) && near(snapped[1].end, 19.8));
+});
+
+test("a short word does not reach across a pause for a sound that is not its own", () => {
+  // "um"-like sound 0.2 s before a short word; the word's stamp starts after it
+  const e = env(3, [[0.5, 0.75, -30], [1.0, 1.3, -25]]);
+  const words: Word[] = [{ i: 0, text: "so", start: 0.9, end: 1.35 }];
+  const [x] = wordEdges(e, words, 3);
+  assert.ok(near(x.onset.t, 1.0), `onset ${x.onset.t}`);
+});
+
+test("a long word does not take in a sound that sits nearer to the next word", () => {
+  // word 0 spans 0.4-1.2; a separate sound at 1.5-1.7 belongs to word 1 (1.45-1.8)
+  const e = env(3, [[0.5, 0.9, -25], [1.5, 1.7, -25]]);
+  const words: Word[] = [{ i: 0, text: "alpha", start: 0.4, end: 1.2 }, { i: 1, text: "b", start: 1.45, end: 1.8 }];
+  const edges = wordEdges(e, words, 3);
+  assert.ok(near(edges[0].offset.t, 0.9), `offset ${edges[0].offset.t}`);
+  assert.ok(near(edges[1].onset.t, 1.5), `onset ${edges[1].onset.t}`);
+});
+
+test("a pause longer than a word's internal stretch still ends it", () => {
+  // 0.5 s of quiet between two runs of one 1.4 s stamp: two things, not one word
+  const e = env(3, [[0.5, 0.8, -25], [1.4, 1.7, -25]]);
+  const [x] = wordEdges(e, [{ i: 0, text: "alpha", start: 0.4, end: 1.8 }], 3);
+  assert.ok(near(x.offset.t, 0.8) || near(x.onset.t, 1.4) || near(x.offset.t, 1.7), "decided by the core, never crossing 0.5 s");
+  assert.ok(!(x.onset.t < 0.6 && x.offset.t > 1.6), "did not merge across the long pause");
+});
