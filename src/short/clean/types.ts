@@ -80,4 +80,8 @@ export interface CleanStats {
   takeSelection?: "llm" | "fallback" | "off";
   /** Retake cuts the LLM proposed that the n-gram pass and Jev had not found. */
   llmDrops?: number;
+  /** Where the plan's words come from: "heard" (clean.mp4 transcribed again) or "mapped" (raw words through the cuts). */
+  captionWords?: "heard" | "mapped";
+  /** How the two differ when both exist: words the cuts expected that were not heard, and the reverse. */
+  captionDiff?: { missing: number; extra: number };
 }

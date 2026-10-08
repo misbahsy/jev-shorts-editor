@@ -12,6 +12,7 @@ import { adaptiveSilenceDb, detectSilence, loudnessEnvelope, measureLoudnorm } f
 import { confirmRetakes, type Confirmed, type JevCall } from "./confirm";
 import { cutVideo } from "./cut";
 import { snapWordsToEdges, wordEdges } from "./edges";
+import { transcribeCleaned } from "./heard";
 import { findFillerSounds, planKeep } from "./keep";
 import { refineWords } from "./refine";
 import { REFINE_MAX_DB, REFINE_OFFSET_DB } from "./constants";
@@ -55,6 +56,10 @@ export interface CleanOptionsIn {
   retranscribe?: Retranscribe;
   /** Set false to skip the second look at voiced spans that have no words. */
   recover?: boolean;
+  /** Replaces the parakeet call that transcribes the finished clean.mp4 for the caption words (tests). */
+  transcribeCleaned?: Retranscribe;
+  /** Set false to caption from the raw words mapped through the cuts instead of listening to clean.mp4. */
+  listenToCleaned?: boolean;
   /** Skips the ffmpeg cut and the loudness pass: plan only. */
   dryRun?: boolean;
   log?: (m: string) => void;
@@ -220,8 +225,33 @@ export async function cleanSource(srcPath: string, workDir: string, input: Clean
     llmDrops: plan.cuts.filter(c => c.source === "llm").length,
   };
 
-  // captions use the real sound edges, so every kept word sits inside a keep range
-  const outWords = remapWords(snapWordsToEdges(words, wordEdges(env, words, pr.durationSec)), plan.keeps);
+  // The plan's words must match what is heard. The raw words are guessed through the cuts first
+  // (any word the planner did not remove survives, clamped to its keep); then the finished clip is
+  // transcribed again and those words, already on the output clock, replace the guess. The guess
+  // stays as the fallback when the clip is not rendered (dry run) or the second transcript fails.
+  const guess = remapWords(snapWordsToEdges(words, wordEdges(env, words, pr.durationSec)), plan.keeps, new Set(removed.keys()));
+  let outWords = guess;
+  let captionWords: CleanStats["captionWords"] = "mapped";
+  let captionDiff: { missing: number; extra: number } | undefined;
+  if (!input.dryRun && input.listenToCleaned !== false) {
+    try {
+      const heard = await transcribeCleaned({
+        cleanPath,
+        workDir,
+        durationSec: afterSec,
+        guess,
+        transcribe: input.transcribeCleaned ?? ((audio, dir) => transcribe(audio, dir, { preciseEnds: true })),
+      });
+      outWords = heard.words;
+      captionWords = "heard";
+      captionDiff = { missing: heard.missing, extra: heard.extra };
+      log(`clean: caption words come from listening to clean.mp4 (${heard.words.length} words; ${heard.missing} the cuts expected were not heard, ${heard.extra} heard that they did not expect)`);
+    } catch (err) {
+      log(`clean: warning: could not transcribe clean.mp4 (${(err as Error).message.split("\n")[0]}); captions use the raw words mapped through the cuts`);
+    }
+  }
+  stats.captionWords = captionWords;
+  if (captionDiff) stats.captionDiff = captionDiff;
   const points = cutPoints(plan.keeps);
 
   const considered = (conf.scored.length ? conf.scored.map(s => s.cand) : cands).map((c: RetakeCandidate) => {

@@ -93,8 +93,16 @@ with precise word ends, and never looked at again after this stage.
    indices; `guardProposals` refuses a range that is not whole words, any drop longer than a slip whose content
    is not said again later (so the last take of a line is never dropped), a short drop inside a phrase with no
    repeat after it, and anything that would take the model's own total past `TAKES_MAX_DROP_FRACTION` (25%) of
-   the speech. Jev's retakes are kept as they are, the model adds what the n-gram pass missed. If the Groq call
-   fails or the answer is not JSON, nothing is added and a warning is logged.
+   the speech. Two more routes let a drop through without a later twin, both still under the cap: a range made
+   only of recovered words (step 2) of at most `TAKES_RECOVERED_MAX_WORDS` (12), which the prompt marks as a
+   `(quiet pickup)` line because it is usually a dangling scrap; and an alternate take, one of two
+   neighbouring sentences that say the same thing in different words ("X just killed Y." then "With Z, you don't
+   need Y."): the range must be a whole sentence of 3 words or more, the surviving partner sentence must share
+   at least `TAKES_ALT_MIN_SHARED` (2) and over half of the smaller sentence's content words, with at most
+   `TAKES_ALT_MAX_BETWEEN_WORDS` (8) surviving words between and within `TAKES_ALT_WINDOW_SEC` (15 s). A claim
+   and its consequence, or a list, share too little. The earlier one may always go; the later one may go only when the earlier sentence
+   is at least as full, so a stub never replaces the finished take. Jev's retakes are kept as they are, the model adds what the
+   n-gram pass missed. If the Groq call fails or the answer is not JSON, nothing is added and a warning is logged.
 2. `recover.ts` guards against speech the transcript lacks. Voiced spans (silencedetect, relative to clip
    loudness) of at least 0.6 s with no words are re-transcribed together in one batched parakeet call (spans padded
    0.3 s, 1 s of silence between them) and the words are merged back with their offsets. A span that is still
@@ -110,10 +118,17 @@ with precise word ends, and never looked at again after this stage.
    earlier word has no punctuation). The deliberate breath at a join is gone. A true silence over `maxGap`
    (0.35 s, measured on the audio) still shrinks to the pads. Edges round to the nearest frame but never come
    within `EDGE_MARGIN_SEC` (30 ms) of the sound, so no cut lands inside a word. `snapWordsToEdges` puts the same
-   edges on the word list, and `remapWords` keeps a word when its center lies in a keep range.
+   edges on the word list. Cuts never remove audio inside a long word's own span: the planner checks the envelope
+   for voiced runs (above -45 dB) inside the neighbouring long word and pulls the cut edge away from them.
 4. `cut.ts` makes `work/clean.mp4` in one ffmpeg call: trim and atrim per KEEP range, 30 ms audio fades at
    each join, concat, frame-accurate, h264_videotoolbox at a high bitrate and AAC 256k.
-5. `remap.ts` moves the surviving words onto the clean clock; `cutPoints` gives `plan.cuts`.
+5. `heard.ts` transcribes the finished `clean.mp4` again with parakeet (into `work/heard/`) and those words, already
+   on the output clock and put on the sound edges of that clip, are the plan's words for captions, beats and copy,
+   so they match what is heard. Mapping the raw words through the cuts is only the fallback (dry run, parakeet
+   failure, or a transcript under `HEARD_MIN_SHARE` 60% of the expected words): `remap.ts` then keeps every word
+   the planner did not remove, clamped to the keep range it overlaps most (a center-in-keep rule lost words whose
+   early-stamped start fell before a cut edge). `clean.json` stats say which was used (`captionWords`) and how
+   they differ (`captionDiff`). `cutPoints` gives `plan.cuts`.
 6. `ffmpegTools.ts` measures loudnorm pass 1 on clean.mp4 (after a highpass at 80 Hz). The final render applies
    pass 2 once, on the final mix, with `linear=true` and a -1 dBFS ceiling limiter.
 
