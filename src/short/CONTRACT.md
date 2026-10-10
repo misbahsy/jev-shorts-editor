@@ -23,7 +23,7 @@ Pipeline (stage → owner file → artifact in work dir):
 
 Rules: TypeScript run with `npx tsx` from the repo root. No new runtime deps, no Playwright,
 no network at render time, system fonts only. Never print/log/commit API keys
-(`TYPESAFE_API_KEY` and `GROQ_API_KEY` come from the shell or the repo-root `.env`, via `../env.ts`).
+(`LITELLM_BASE_URL` + `LITELLM_API_KEY`, or `TYPESAFE_API_KEY` without a gateway, and `GROQ_API_KEY` come from the shell or the repo-root `.env`, via `../env.ts`).
 Shared helpers: `../jevClient.ts`, `../render/sidecar.ts`, `../render/seekScript.ts`, `../render/sfx.ts`, `../render/ffutil.ts`.
 ffmpeg 9 quirks: `-fps_mode` not `-vsync`; no libass; `h264_videotoolbox` available.
 

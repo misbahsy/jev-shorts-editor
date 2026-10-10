@@ -49,12 +49,12 @@ if repo="$(find_repo)"; then
     keys="$(cd "$repo" && node_modules/.bin/tsx --eval '
       import { optionalEnv } from "./src/env.ts";
       const has = (k) => Boolean(optionalEnv(k));
-      const jev = has("TYPESAFE_API_KEY") || (has("LITELLM_BASE_URL") && has("LITELLM_API_KEY"));
+      const jev = has("LITELLM_BASE_URL") ? has("LITELLM_API_KEY") : has("TYPESAFE_API_KEY");
       console.log(`jev=${jev ? "set" : "missing"} groq=${has("GROQ_API_KEY") ? "set" : "missing"}`);
     ' 2>/dev/null)"
     case "$keys" in
-      *jev=set*) ok "Jev access (TYPESAFE_API_KEY, or LITELLM_BASE_URL + LITELLM_API_KEY)" ;;
-      *) miss "Jev access (TYPESAFE_API_KEY, or LITELLM_BASE_URL + LITELLM_API_KEY)" "copy .env.example to .env in the checkout and paste the key there" ;;
+      *jev=set*) ok "Jev access (LITELLM_BASE_URL + LITELLM_API_KEY, or TYPESAFE_API_KEY direct)" ;;
+      *) miss "Jev access (LITELLM_BASE_URL + LITELLM_API_KEY, or TYPESAFE_API_KEY direct)" "start a LiteLLM proxy (see the README) and put its URL and key in .env in the checkout" ;;
     esac
     case "$keys" in
       *groq=set*) ok "GROQ_API_KEY (writes hook and card copy)" ;;

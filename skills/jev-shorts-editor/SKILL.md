@@ -1,7 +1,7 @@
 ---
 name: jev-shorts-editor
 description: Turns a talking-head video on a Mac into a finished, edited 1080x1920 vertical short with captions, punch-in zooms, animated text cards, transitions, sound effects, and retakes and pauses cut out. It runs end to end on the user's machine and opens a live preview in about a minute. Use this whenever someone wants to edit, cut, clip, caption or "make a short / reel / TikTok / YouTube Short" from a recording of a person talking, wants retakes or dead air removed from a talking-head clip, wants to repurpose a long video into a vertical short, or asks to run or fix jev-shorts-editor, even if they never name the tool.
-compatibility: macOS 15+ on Apple silicon. Needs node 20.11+, ffmpeg, swiftc, uv + parakeet-mlx, a Jev (TypeSafe) key or a LiteLLM gateway, and a Groq key.
+compatibility: macOS 15+ on Apple silicon. Needs node 20.11+, ffmpeg, swiftc, uv + parakeet-mlx, a LiteLLM gateway with a Jev (TypeSafe) key behind it, and a Groq key.
 ---
 
 # Jev shorts editor
@@ -24,7 +24,8 @@ It prints `ok` or `MISSING` with the exact fix for each requirement and exits 0 
 - **Missing tools (brew, uv, npm):** tell the user what you will install and run the printed fixes once they agree. Installing software on someone's machine is their call.
 - **swiftc missing:** `xcode-select --install` opens an Apple dialog that the user has to click through themselves. Ask them to do it and tell you when it finishes.
 - **Keys missing:** run `bash <skill-dir>/scripts/keys.sh`. It opens the key file in TextEdit so the user can paste keys there. Never ask the user to paste keys into chat, and never read, cat or print that file; keys in a chat transcript are leaked keys. Tell them:
-  - a Jev key comes from TypeSafe (`TYPESAFE_API_KEY`), or they can point `LITELLM_BASE_URL` and `LITELLM_API_KEY` at their own LiteLLM gateway;
+  - Jev goes through a LiteLLM gateway: `LITELLM_BASE_URL` (default `http://localhost:4000`) and `LITELLM_API_KEY`. The gateway holds the TypeSafe key. If they don't run one yet, point them at the README's quick start, which starts the proxy with `litellm.config.example.yaml`;
+  - without a gateway, they can leave `LITELLM_BASE_URL` empty and set `TYPESAFE_API_KEY` to call TypeSafe directly;
   - `GROQ_API_KEY` comes from console.groq.com.
 
 Rerun doctor until it says `ready.`
